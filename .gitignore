@@ -1,2 +1,11 @@
-/Data
-/Export
+# Data folders
+/Data/
+/Export/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
