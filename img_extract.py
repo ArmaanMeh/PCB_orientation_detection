@@ -5,8 +5,8 @@ import shutil
 # =====================================
 # CONFIG
 # =====================================
-video_path = "Data/OT_Test/OT_Raw_Data/OT_Fail1.mp4"
-output_dir = "Data/OT_Test/OT_images/OT_Fail"
+video_path = "Data/Raw_data/Fail_env1.mp4"
+output_dir = "Data/Processed_data/Fail_data"
 interval_ms = 200
 
 # Target output resolution
@@ -68,20 +68,34 @@ print(f"Duration          : {duration_sec:.2f} sec ({int(duration_ms)} ms)")
 print("========================\n")
 
 # =========================
+# HANDLE ORIENTATION
+# =========================
+needs_rotation = orig_width < target_width or orig_height < target_height
+
+if needs_rotation:
+    print("Portrait video detected. Frames will be rotated for landscape crop.\n")
+    work_width, work_height = orig_height, orig_width
+else:
+    work_width, work_height = orig_width, orig_height
+
+# =========================
 # VALIDATION
 # =========================
-if orig_width < target_width or orig_height < target_height:
+if work_width < target_width or work_height < target_height:
     raise ValueError(
         f"Requested resolution ({target_width}x{target_height}) "
-        f"is larger than video resolution ({orig_width}x{orig_height}). "
+        f"is larger than working resolution ({work_width}x{work_height}). "
         f"Clean crop is impossible."
     )
 
 # Precompute centered crop
-x_start = (orig_width - target_width) // 2
-y_start = (orig_height - target_height) // 2
+x_start = (work_width - target_width) // 2
+y_start = (work_height - target_height) // 2
 
-print("Cropping mode: HARD CENTER CROP")
+if needs_rotation:
+    print("Cropping mode: ROTATE 90° + HARD CENTER CROP")
+else:
+    print("Cropping mode: HARD CENTER CROP")
 print(f"Crop region: x={x_start}:{x_start+target_width}, "
       f"y={y_start}:{y_start+target_height}\n")
 
@@ -101,6 +115,9 @@ while True:
         break
 
     if frame_count % frame_interval == 0:
+        # Rotate if needed
+        if needs_rotation:
+            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
 
         cropped = frame[
             y_start:y_start + target_height,
