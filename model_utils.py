@@ -14,7 +14,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import matplotlib.pyplot as plt
 
 # Configuration
-IMG_SIZE = 244
+IMG_SIZE = 240  # Changed from 244 to satisfy HOG constraint: (240-32) % 16 == 0
 HOG_ORIENTATIONS = 9
 HOG_PIXELS_PER_CELL = (16, 16)
 HOG_CELLS_PER_BLOCK = (2, 2)
@@ -25,22 +25,64 @@ SCALER_PATH = "Export/hog_svm_scaler.pkl"
 DATA_DIR = "Data/Processed_data"
 
 
-# ==========================================
-# UTILITY FUNCTIONS
-# ==========================================
 def extract_hog_features(image):
-    """Extract HOG features from image."""
-    if len(image.shape) == 3:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    """
+    Extract HOG features from image with consistent parameters.
+    Returns 1D float32 array.
+    """
+    try:
+        # Handle None
+        if image is None:
+            return None
+        
+        # Convert to grayscale
+        if len(image.shape) == 3:
+            if image.shape[2] not in [3, 4]:
+                return None
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Validate grayscale
+        if len(image.shape) != 2:
+            return None
+        
+        # Ensure uint8
+        if image.dtype != np.uint8:
+            if image.max() > 1.0:
+                image = np.clip(image, 0, 255).astype(np.uint8)
+            else:
+                image = (image * 255).astype(np.uint8)
+        
+        # Resize to standard size
+        if image.shape != (IMG_SIZE, IMG_SIZE):
+            image = cv2.resize(image, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_LINEAR)
+        
+        # Create properly configured HOG descriptor with positional arguments
+        hog = cv2.HOGDescriptor(
+            (IMG_SIZE, IMG_SIZE),      # winSize
+            (32, 32),                  # blockSize (2 cells of 16x16)
+            (16, 16),                  # blockStride (stride by 1 cell)
+            (16, 16),                  # cellSize
+            HOG_ORIENTATIONS           # nbins
+        )
+        
+        # Extract with consistent winStride
+        features = hog.compute(image, winStride=(16, 16), padding=(0, 0))
+        
+        if features is None or features.size == 0:
+            return None
+        
+        # Flatten and convert to float32
+        features = features.flatten().astype(np.float32)
+        
+        # Validate output
+        if not np.all(np.isfinite(features)):
+            return None
+        
+        return features
     
-    if image.shape != (IMG_SIZE, IMG_SIZE):
-        image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
-    
-    # Use default HOGDescriptor - works with standard parameters
-    hog = cv2.HOGDescriptor()
-    
-    features = hog.compute(image, winStride=(8, 8), padding=(0, 0))
-    return features.flatten()
+    except Exception as e:
+        print(f"Error in HOG extraction: {e}")
+        return None
 
 
 def load_model():

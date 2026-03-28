@@ -2,6 +2,7 @@
 HOG + SVM Model for PCB Orientation Detection
 Includes: feature extraction, hyperparameter optimization, validation, 
 evaluation metrics, and robust training pipeline
+CRASH-PROOF: Memory-efficient processing with robust error handling
 """
 
 import cv2
@@ -9,6 +10,8 @@ import numpy as np
 import os
 import pickle
 import time
+import gc
+import sys
 from pathlib import Path
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
@@ -32,7 +35,7 @@ MODEL_SAVE_DIR = "Export"
 MODEL_NAME = "hog_svm_model.pkl"
 SCALER_NAME = "hog_svm_scaler.pkl"
 
-IMG_SIZE = 244
+IMG_SIZE = 240  # Changed from 244 to satisfy HOG constraint: (240-32) % 16 == 0
 HOG_ORIENTATIONS = 9
 HOG_PIXELS_PER_CELL = (16, 16)
 HOG_CELLS_PER_BLOCK = (2, 2)
@@ -43,123 +46,342 @@ VAL_SPLIT = 0.2
 
 CLASS_LABELS = {0: "Fail", 1: "Pass"}
 
-# Global HOG descriptor (created once for efficiency)
-HOG_DESCRIPTOR = cv2.HOGDescriptor()
+# Memory management
+BATCH_SIZE = 32  # Process images in batches to avoid memory overflow
+
+# EXPECTED HOG FEATURE SIZE (calculated from parameters)
+# Image size: 244x244, window: 244x244, stride: (16,16), block: (2,2)
+# Cells: (244/16 = 15.25 -> 15 cells per axis)
+# Blocks: (2x2 cells), stride by 1 cell
+# Hist bins: 9 orientations
+# Expected: ((15-2+1)^2) * (2*2) * 9 = 14^2 * 4 * 9 = 7056
+HOG_EXPECTED_FEATURE_SIZE = None  # Will be set during first extraction
+
+
+def create_hog_descriptor():
+    """
+    Create a properly configured HOG descriptor with stable parameters.
+    Uses the correct OpenCV API with positional arguments.
+    
+    Returns:
+        Configured HOGDescriptor instance
+    """
+    # Image is 244x244, detect on full image
+    # Block size 16x16, cells 2x2 per block (32x32 block)
+    # Cells per image: 244/16 = 15.25 -> 15 cells
+    try:
+        # Create HOG with proper constructor parameters
+        # HOGDescriptor(winSize, blockSize, blockStride, cellSize, nbins,
+        #               derivAperture=1, winSigma=-1, histogramNormType=0,
+        #               L2HysThreshold=0.2, gammaCorrection=True, nlevels=64)
+        hog = cv2.HOGDescriptor(
+            (IMG_SIZE, IMG_SIZE),      # winSize
+            (32, 32),                  # blockSize (2 cells of 16x16)
+            (16, 16),                  # blockStride (stride by 1 cell)
+            (16, 16),                  # cellSize
+            HOG_ORIENTATIONS           # nbins (9)
+        )
+        return hog
+    except Exception as e:
+        print(f"Error creating HOGDescriptor: {e}")
+        print("Falling back to default HOGDescriptor...")
+        # Fallback to default
+        return cv2.HOGDescriptor()
+
+
+# Initialize HOG descriptor once at startup
+HOG_DESCRIPTOR = create_hog_descriptor()
 
 
 # ==========================================
-# HOG FEATURE EXTRACTION
+# HOG FEATURE EXTRACTION (ROBUST & STABLE)
 # ==========================================
 def extract_hog_features(image, visualize=False):
     """
-    Extract HOG features from an image.
-    Uses globally cached HOGDescriptor for efficiency.
+    Extract HOG features from an image with robust error handling.
+    Ensures consistent, 1D float32 output.
     
     Args:
         image: Input image (BGR format from cv2)
         visualize: Boolean to return visualization (not currently used)
     
     Returns:
-        HOG feature vector
+        HOG feature vector (1D np.ndarray, float32) or None if extraction fails
     """
-    if len(image.shape) == 3:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    global HOG_EXPECTED_FEATURE_SIZE
     
-    # Ensure image is the correct size
-    if image.shape != (IMG_SIZE, IMG_SIZE):
-        image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
+    try:
+        # Handle None input
+        if image is None:
+            print("  ERROR: Image is None")
+            return None
+        
+        # Validate image array
+        if not isinstance(image, np.ndarray):
+            print(f"  ERROR: Image is not ndarray, got {type(image)}")
+            return None
+        
+        # Convert to grayscale if needed
+        if len(image.shape) == 3:
+            if image.shape[2] not in [3, 4]:
+                print(f"  ERROR: Invalid image channels: {image.shape[2]}")
+                return None
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        elif len(image.shape) != 2:
+            print(f"  ERROR: Invalid image shape: {image.shape}")
+            return None
+        
+        # Validate grayscale image
+        if image.dtype not in [np.uint8, np.float32, np.float64]:
+            print(f"  ERROR: Invalid image dtype: {image.dtype}")
+            return None
+        
+        # Ensure image is uint8 for HOG
+        if image.dtype != np.uint8:
+            if image.max() > 1.0:  # Likely wrong scale
+                image = np.clip(image, 0, 255).astype(np.uint8)
+            else:  # [0,1] range, scale to [0,255]
+                image = (image * 255).astype(np.uint8)
+        
+        # Ensure correct size
+        if image.shape != (IMG_SIZE, IMG_SIZE):
+            image = cv2.resize(image, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_LINEAR)
+        
+        # Validate image data
+        if image.size == 0:
+            print("  ERROR: Empty image after processing")
+            return None
+        
+        # Extract HOG features - CRITICAL: winStride must match blockStride
+        features = HOG_DESCRIPTOR.compute(
+            image, 
+            winStride=(16, 16),    # Must match blockStride
+            padding=(0, 0),
+            locations=None
+        )
+        
+        # Validate HOG output
+        if features is None:
+            print("  ERROR: HOG.compute returned None")
+            return None
+        
+        # Flatten to 1D
+        features = features.flatten()
+        
+        # Validate feature vector
+        if features.size == 0:
+            print("  ERROR: Features empty after flatten")
+            return None
+        
+        # Set expected size on first successful extraction
+        if HOG_EXPECTED_FEATURE_SIZE is None:
+            HOG_EXPECTED_FEATURE_SIZE = features.size
+            print(f"  ℹ HOG feature size established: {HOG_EXPECTED_FEATURE_SIZE}")
+        
+        # Validate feature size consistency
+        if features.size != HOG_EXPECTED_FEATURE_SIZE:
+            print(f"  WARNING: Feature size mismatch! Expected {HOG_EXPECTED_FEATURE_SIZE}, got {features.size}")
+            # Pad or truncate to expected size
+            if features.size < HOG_EXPECTED_FEATURE_SIZE:
+                features = np.pad(features, (0, HOG_EXPECTED_FEATURE_SIZE - features.size), mode='constant')
+            else:
+                features = features[:HOG_EXPECTED_FEATURE_SIZE]
+        
+        # Convert to float32 (stable type for sklearn)
+        features = features.astype(np.float32)
+        
+        # Validate final output
+        if not np.all(np.isfinite(features)):
+            print(f"  ERROR: Non-finite values in features (NaN/Inf)")
+            return None
+        
+        return features
     
-    # Use cached HOGDescriptor for performance
-    features = HOG_DESCRIPTOR.compute(image, winStride=(8, 8), padding=(0, 0))
-    features = features.flatten()
-    
-    return features
+    except Exception as e:
+        print(f"  EXCEPTION in extract_hog_features: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 # ==========================================
-# DATA LOADING & PREPROCESSING
+# DATA LOADING & PREPROCESSING (MEMORY-EFFICIENT)
 # ==========================================
-def load_data(data_dir=DATA_DIR):
+def get_image_paths(data_dir=DATA_DIR):
     """
-    Load images and labels from directory structure.
-    Expected structure: data_dir/Pass_data/*.jpg and data_dir/Fail_data/*.jpg
-    
-    Returns:
-        Tuple of (images, labels, image_paths)
-    """
-    images = []
-    labels = []
-    image_paths = []
-    
-    print("Loading data from directory structure...")
-    
-    # Load Pass data (label 1)
-    pass_dir = os.path.join(data_dir, "Pass_data")
-    if os.path.exists(pass_dir):
-        print(f"Loading Pass images from {pass_dir}...")
-        for img_file in tqdm(os.listdir(pass_dir)):
-            if img_file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                img_path = os.path.join(pass_dir, img_file)
-                try:
-                    img = cv2.imread(img_path)
-                    if img is not None:
-                        img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-                        images.append(img)
-                        labels.append(1)
-                        image_paths.append(img_path)
-                except Exception as e:
-                    print(f"Error loading {img_path}: {e}")
-    
-    # Load Fail data (label 0)
-    fail_dir = os.path.join(data_dir, "Fail_data")
-    if os.path.exists(fail_dir):
-        print(f"Loading Fail images from {fail_dir}...")
-        for img_file in tqdm(os.listdir(fail_dir)):
-            if img_file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                img_path = os.path.join(fail_dir, img_file)
-                try:
-                    img = cv2.imread(img_path)
-                    if img is not None:
-                        img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-                        images.append(img)
-                        labels.append(0)
-                        image_paths.append(img_path)
-                except Exception as e:
-                    print(f"Error loading {img_path}: {e}")
-    
-    if len(images) == 0:
-        raise ValueError(f"No images found in {data_dir}")
-    
-    print(f"Loaded {len(images)} images")
-    print(f"Pass images: {sum(1 for l in labels if l == 1)}")
-    print(f"Fail images: {sum(1 for l in labels if l == 0)}")
-    
-    return np.array(images), np.array(labels), image_paths
-
-
-def extract_features_batch(images, verbose=True):
-    """
-    Extract HOG features from a batch of images.
+    Get all image paths without loading images into memory.
+    Returns path tuples with labels for on-the-fly loading.
     
     Args:
-        images: Array of images
+        data_dir: Path to data directory
+    
+    Returns:
+        Tuple of (image_paths_list, labels_list)
+    """
+    image_paths = []
+    labels = []
+    
+    print("Scanning data directory...")
+    
+    # Scan Pass data (label 1)
+    pass_dir = os.path.join(data_dir, "Pass_data")
+    if os.path.exists(pass_dir):
+        pass_files = [f for f in os.listdir(pass_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        print(f"Found {len(pass_files)} Pass images")
+        for img_file in pass_files:
+            img_path = os.path.join(pass_dir, img_file)
+            image_paths.append(img_path)
+            labels.append(1)
+    
+    # Scan Fail data (label 0)
+    fail_dir = os.path.join(data_dir, "Fail_data")
+    if os.path.exists(fail_dir):
+        fail_files = [f for f in os.listdir(fail_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        print(f"Found {len(fail_files)} Fail images")
+        for img_file in fail_files:
+            img_path = os.path.join(fail_dir, img_file)
+            image_paths.append(img_path)
+            labels.append(0)
+    
+    if len(image_paths) == 0:
+        raise ValueError(f"No images found in {data_dir}")
+    
+    print(f"Total images found: {len(image_paths)}")
+    print(f"Pass: {sum(1 for l in labels if l == 1)}, Fail: {sum(1 for l in labels if l == 0)}")
+    
+    return image_paths, labels
+
+
+def load_and_extract_features(image_paths, labels, verbose=True):
+    """
+    Load images and extract HOG features on-the-fly (memory efficient).
+    Processes in batches to avoid memory overflow.
+    Ensures consistent 2D array output.
+    
+    Args:
+        image_paths: List of image file paths
+        labels: List of corresponding labels
         verbose: Show progress bar
     
     Returns:
-        Array of HOG features
+        Tuple of (features_array_2d, labels_array) - both properly validated
     """
-    features = []
-    iterator = tqdm(images, desc="Extracting HOG features") if verbose else images
+    features_list = []
+    valid_labels = []
+    failed_count = 0
+    success_count = 0
+    feature_sizes = []  # Track all feature sizes for consistency check
     
-    for img in iterator:
+    print("\nExtracting HOG features (memory-efficient batch processing)...")
+    
+    iterator = tqdm(enumerate(image_paths), total=len(image_paths), desc="Processing")
+    
+    for idx, img_path in iterator:
         try:
-            hog_features = extract_hog_features(img, visualize=False)
-            features.append(hog_features)
+            # Load single image
+            img = cv2.imread(img_path)
+            
+            if img is None:
+                print(f"\n⚠ Failed to load: {img_path} (Invalid file)")
+                failed_count += 1
+                continue
+            
+            # Validate image
+            if img.size == 0:
+                print(f"\n⚠ Empty image: {img_path}")
+                failed_count += 1
+                continue
+            
+            # Validate image dtype
+            if img.dtype != np.uint8:
+                print(f"\n⚠ Invalid dtype {img.dtype}: {img_path}, converting...")
+                img = img.astype(np.uint8)
+            
+            # Resize to standard size
+            if img.shape[:2] != (IMG_SIZE, IMG_SIZE):
+                img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+            
+            # Extract HOG features
+            features = extract_hog_features(img)
+            
+            if features is None or len(features) == 0:
+                print(f"\n⚠ Failed to extract features: {img_path}")
+                failed_count += 1
+                continue
+            
+            # Validate output
+            if features.dtype != np.float32:
+                print(f"\n⚠ Wrong dtype {features.dtype}: converting to float32...")
+                features = features.astype(np.float32)
+            
+            # Check for NaN/Inf
+            if not np.all(np.isfinite(features)):
+                print(f"\n⚠ Non-finite values in features: {img_path}")
+                failed_count += 1
+                continue
+            
+            # Ensure 1D
+            if len(features.shape) != 1:
+                features = features.flatten()
+            
+            features_list.append(features)
+            feature_sizes.append(features.size)
+            valid_labels.append(labels[idx])
+            success_count += 1
+            
+            # Free memory from loaded image
+            del img
+            
+            # Periodic garbage collection to prevent memory buildup
+            if (idx + 1) % BATCH_SIZE == 0:
+                gc.collect()
+                iterator.set_postfix({'Extracted': success_count, 'Failed': failed_count})
+        
         except Exception as e:
-            print(f"Error extracting features: {e}")
+            print(f"\n✗ Error processing {img_path}: {type(e).__name__}: {e}")
+            failed_count += 1
             continue
     
-    return np.array(features)
+    print(f"\n✓ Extraction complete: {success_count} success, {failed_count} failed")
+    
+    if len(features_list) == 0:
+        raise ValueError("No features could be extracted. Check image files and paths.")
+    
+    # Check feature size consistency
+    unique_sizes = set(feature_sizes)
+    if len(unique_sizes) > 1:
+        print(f"⚠ WARNING: Inconsistent feature sizes detected: {unique_sizes}")
+        max_size = max(feature_sizes)
+        # Pad all features to max size
+        features_list = [
+            np.pad(f, (0, max_size - f.size), mode='constant') if f.size < max_size else f[:max_size]
+            for f in features_list
+        ]
+        print(f"  Standardized all features to size {max_size}")
+    
+    # Convert to 2D array (N_samples, N_features)
+    features_array = np.array(features_list, dtype=np.float32)
+    labels_array = np.array(valid_labels, dtype=np.int32)
+    
+    # CRITICAL VALIDATION: Ensure 2D array
+    if len(features_array.shape) != 2:
+        print(f"ERROR: Features array is not 2D, shape: {features_array.shape}")
+        raise ValueError(f"Features must be 2D, got shape {features_array.shape}")
+    
+    # Validate dimensions
+    n_samples, n_features = features_array.shape
+    if n_samples != len(labels_array):
+        raise ValueError(f"Sample mismatch: features {n_samples} vs labels {len(labels_array)}")
+    
+    if n_features == 0:
+        raise ValueError("Features array has 0 features")
+    
+    print(f"✓ Features array shape: {features_array.shape} (dtype: {features_array.dtype})")
+    print(f"✓ Labels array shape: {labels_array.shape} (dtype: {labels_array.dtype})")
+    print(f"  Feature statistics: min={features_array.min():.3f}, max={features_array.max():.3f}, mean={features_array.mean():.3f}")
+    print(f"  Labels distribution: {np.bincount(labels_array)}")
+    
+    return features_array, labels_array
 
 
 # ==========================================
@@ -168,11 +390,12 @@ def extract_features_batch(images, verbose=True):
 def train_hog_svm(X_train, y_train, X_val=None, y_val=None, use_grid_search=True):
     """
     Train HOG+SVM model with hyperparameter optimization.
+    Includes comprehensive input validation.
     
     Args:
-        X_train: Training features
-        y_train: Training labels
-        X_val: Validation features (optional)
+        X_train: Training features (must be 2D ndarray)
+        y_train: Training labels (1D ndarray)
+        X_val: Validation features (optional, must be 2D)
         y_val: Validation labels (optional)
         use_grid_search: Boolean to perform grid search for hyperparameter tuning
     
@@ -183,53 +406,136 @@ def train_hog_svm(X_train, y_train, X_val=None, y_val=None, use_grid_search=True
     print("TRAINING HOG+SVM MODEL")
     print("="*50)
     
+    # CRITICAL VALIDATION: Input data types and shapes
+    print("\nValidating input data...")
+    
+    # Check X_train
+    if not isinstance(X_train, np.ndarray):
+        raise TypeError(f"X_train must be ndarray, got {type(X_train)}")
+    if len(X_train.shape) != 2:
+        raise ValueError(f"X_train must be 2D, got shape {X_train.shape}")
+    if X_train.dtype != np.float32:
+        print(f"  Converting X_train from {X_train.dtype} to float32")
+        X_train = X_train.astype(np.float32)
+    
+    # Check y_train
+    if not isinstance(y_train, np.ndarray):
+        y_train = np.array(y_train)
+    if len(y_train.shape) != 1:
+        raise ValueError(f"y_train must be 1D, got shape {y_train.shape}")
+    if len(y_train) != X_train.shape[0]:
+        raise ValueError(f"Length mismatch: X_train {X_train.shape[0]} vs y_train {len(y_train)}")
+    
+    # Check for NaN/Inf
+    if not np.all(np.isfinite(X_train)):
+        raise ValueError("X_train contains NaN or Inf values")
+    if not np.all(np.isfinite(y_train)):
+        raise ValueError("y_train contains NaN or Inf values")
+    
+    print(f"✓ X_train valid: shape {X_train.shape}, dtype {X_train.dtype}")
+    print(f"✓ y_train valid: shape {y_train.shape}, dtype {y_train.dtype}")
+    print(f"  Class distribution: {np.bincount(y_train)}")
+    
+    # Validate optional inputs
+    if X_val is not None:
+        if not isinstance(X_val, np.ndarray):
+            raise TypeError(f"X_val must be ndarray, got {type(X_val)}")
+        if len(X_val.shape) != 2:
+            raise ValueError(f"X_val must be 2D, got shape {X_val.shape}")
+        if X_val.shape[1] != X_train.shape[1]:
+            raise ValueError(f"Feature mismatch: X_train {X_train.shape[1]} vs X_val {X_val.shape[1]}")
+        if X_val.dtype != np.float32:
+            X_val = X_val.astype(np.float32)
+        print(f"✓ X_val valid: shape {X_val.shape}, dtype {X_val.dtype}")
+    
+    if y_val is not None:
+        if not isinstance(y_val, np.ndarray):
+            y_val = np.array(y_val)
+        if len(y_val) != X_val.shape[0]:
+            raise ValueError(f"Length mismatch: X_val {X_val.shape[0]} vs y_val {len(y_val)}")
+        print(f"✓ y_val valid: shape {y_val.shape}")
+    
     # Standardize features
     print("\nStandardizing features...")
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     
+    # Validate scaler output
+    if X_train_scaled.shape != X_train.shape:
+        raise ValueError(f"Scaler output shape mismatch: {X_train_scaled.shape} vs {X_train.shape}")
+    
+    X_train_scaled = X_train_scaled.astype(np.float32)
+    print(f"✓ Training features scaled: shape {X_train_scaled.shape}, min={X_train_scaled.min():.3f}, max={X_train_scaled.max():.3f}")
+    
     if X_val is not None:
-        X_val_scaled = scaler.transform(X_val)
+        X_val_scaled = scaler.transform(X_val).astype(np.float32)
+        print(f"✓ Validation features scaled: shape {X_val_scaled.shape}")
     
     # Hyperparameter tuning with Grid Search
     if use_grid_search:
         print("\nPerforming GridSearchCV for hyperparameter optimization...")
         
-        # Reduced parameter grid for faster training (was 4x2x4=32 combinations, now 2x2x2=8)
+        # Stable parameters
         param_grid = {
-            'C': [1, 100],
+            'C': [1, 10, 100],
             'kernel': ['rbf', 'linear'],
-            'gamma': ['scale', 0.01]
+            'gamma': ['scale', 'auto']
         }
         
-        svm = SVC(probability=True, random_state=RANDOM_STATE)
+        svm = SVC(probability=True, random_state=RANDOM_STATE, cache_size=500, max_iter=2000)
         grid_search = GridSearchCV(svm, param_grid, cv=3, scoring='f1', n_jobs=-1, verbose=1)
-        grid_search.fit(X_train_scaled, y_train)
         
-        print(f"\nBest parameters: {grid_search.best_params_}")
-        print(f"Best CV F1-score: {grid_search.best_score_:.4f}")
+        try:
+            grid_search.fit(X_train_scaled, y_train)
+        except Exception as e:
+            print(f"GridSearchCV error: {type(e).__name__}: {e}")
+            print("Falling back to default SVM parameters...")
+            model = SVC(kernel='rbf', C=100, gamma='scale', probability=True, 
+                       random_state=RANDOM_STATE, cache_size=500, max_iter=2000)
+            model.fit(X_train_scaled, y_train)
+            return model, scaler
+        
+        print(f"\n✓ Best parameters: {grid_search.best_params_}")
+        print(f"✓ Best CV F1-score: {grid_search.best_score_:.4f}")
         
         model = grid_search.best_estimator_
     else:
         # Train with default parameters
         print("\nTraining SVM with default parameters...")
-        model = SVC(kernel='rbf', C=100, gamma='scale', probability=True, random_state=RANDOM_STATE)
-        model.fit(X_train_scaled, y_train)
+        model = SVC(kernel='rbf', C=100, gamma='scale', probability=True, 
+                   random_state=RANDOM_STATE, cache_size=500, max_iter=2000)
+        try:
+            model.fit(X_train_scaled, y_train)
+        except Exception as e:
+            print(f"SVM training error: {type(e).__name__}: {e}")
+            raise
+    
+    print(f"✓ Model trained: {type(model).__name__}")
     
     # Validate on training set
     print("\n" + "-"*50)
     print("TRAINING SET PERFORMANCE")
     print("-"*50)
-    y_train_pred = model.predict(X_train_scaled)
-    _print_metrics(y_train, y_train_pred)
+    try:
+        y_train_pred = model.predict(X_train_scaled)
+        if y_train_pred.shape != y_train.shape:
+            raise ValueError(f"Prediction shape mismatch: {y_train_pred.shape} vs {y_train.shape}")
+        _print_metrics(y_train, y_train_pred)
+    except Exception as e:
+        print(f"Error in training set evaluation: {e}")
     
     # Validate on validation set if provided
     if X_val is not None and y_val is not None:
         print("\n" + "-"*50)
         print("VALIDATION SET PERFORMANCE")
         print("-"*50)
-        y_val_pred = model.predict(X_val_scaled)
-        _print_metrics(y_val, y_val_pred)
+        try:
+            y_val_pred = model.predict(X_val_scaled)
+            if y_val_pred.shape != y_val.shape:
+                raise ValueError(f"Validation prediction shape mismatch")
+            _print_metrics(y_val, y_val_pred)
+        except Exception as e:
+            print(f"Error in validation set evaluation: {e}")
     
     return model, scaler
 
@@ -255,57 +561,103 @@ def _print_metrics(y_true, y_pred):
 def evaluate_model(model, scaler, X_test, y_test, dataset_name="Test"):
     """
     Comprehensive model evaluation with multiple metrics.
+    Includes robust error handling and input validation.
     
     Args:
         model: Trained SVM model
         scaler: Feature scaler
-        X_test: Test features
+        X_test: Test features (must be 2D)
         y_test: Test labels
         dataset_name: Name of dataset for display
     
     Returns:
         Dictionary of evaluation metrics
     """
-    print("\n" + "="*50)
-    print(f"{dataset_name.upper()} SET EVALUATION")
-    print("="*50)
+    try:
+        print("\n" + "="*50)
+        print(f"{dataset_name.upper()} SET EVALUATION")
+        print("="*50)
+        
+        # Validate inputs
+        if X_test is None or len(X_test) == 0:
+            raise ValueError("Test features are empty")
+        if y_test is None or len(y_test) == 0:
+            raise ValueError("Test labels are empty")
+        
+        # Ensure proper shapes
+        if not isinstance(X_test, np.ndarray):
+            X_test = np.array(X_test, dtype=np.float32)
+        if not isinstance(y_test, np.ndarray):
+            y_test = np.array(y_test)
+        
+        # Validate dimensions
+        if len(X_test.shape) != 2:
+            raise ValueError(f"X_test must be 2D, got {X_test.shape}")
+        if len(X_test) != len(y_test):
+            raise ValueError(f"Feature and label mismatch: {len(X_test)} vs {len(y_test)}")
+        
+        # Ensure float32
+        if X_test.dtype != np.float32:
+            X_test = X_test.astype(np.float32)
+        
+        print(f"Input validation:\n  X_test shape: {X_test.shape}")
+        print(f"  y_test shape: {y_test.shape}")
+        print(f"  X_test dtype: {X_test.dtype}")
+        
+        # Scale features
+        X_test_scaled = scaler.transform(X_test).astype(np.float32)
+        if X_test_scaled.shape != X_test.shape:
+            raise ValueError(f"Scaler output mismatch: {X_test_scaled.shape} vs {X_test.shape}")
+        
+        # Predict
+        y_pred = model.predict(X_test_scaled)
+        if y_pred.shape != y_test.shape:
+            raise ValueError(f"Prediction shape mismatch: {y_pred.shape} vs {y_test.shape}")
+        
+        y_pred_proba = model.predict_proba(X_test_scaled)
+        if y_pred_proba.shape[0] != len(y_test):
+            raise ValueError(f"Probability shape mismatch")
+        
+        print(f"✓ Predictions generated successfully")
+        
+        # Calculate metrics
+        accuracy = accuracy_score(y_test, y_pred)
+        precision = precision_score(y_test, y_pred, zero_division=0)
+        recall = recall_score(y_test, y_pred, zero_division=0)
+        f1 = f1_score(y_test, y_pred, zero_division=0)
+        roc_auc = roc_auc_score(y_test, y_pred_proba[:, 1])
+        
+        print(f"\nAccuracy:  {accuracy:.4f}")
+        print(f"Precision: {precision:.4f}")
+        print(f"Recall:    {recall:.4f}")
+        print(f"F1-Score:  {f1:.4f}")
+        print(f"ROC-AUC:   {roc_auc:.4f}")
+        
+        print(f"\n{dataset_name} Classification Report:")
+        print(classification_report(y_test, y_pred, target_names=[CLASS_LABELS[0], CLASS_LABELS[1]]))
+        
+        cm = confusion_matrix(y_test, y_pred)
+        print(f"\nConfusion Matrix:\n{cm}")
+        
+        metrics = {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "roc_auc": roc_auc,
+            "confusion_matrix": cm,
+            "y_pred": y_pred,
+            "y_pred_proba": y_pred_proba,
+            "y_true": y_test
+        }
+        
+        return metrics
     
-    X_test_scaled = scaler.transform(X_test)
-    y_pred = model.predict(X_test_scaled)
-    y_pred_proba = model.predict_proba(X_test_scaled)
-    
-    # Calculate metrics
-    accuracy = accuracy_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred, zero_division=0)
-    recall = recall_score(y_test, y_pred, zero_division=0)
-    f1 = f1_score(y_test, y_pred, zero_division=0)
-    roc_auc = roc_auc_score(y_test, y_pred_proba[:, 1])
-    
-    print(f"\nAccuracy:  {accuracy:.4f}")
-    print(f"Precision: {precision:.4f}")
-    print(f"Recall:    {recall:.4f}")
-    print(f"F1-Score:  {f1:.4f}")
-    print(f"ROC-AUC:   {roc_auc:.4f}")
-    
-    print(f"\n{dataset_name} Classification Report:")
-    print(classification_report(y_test, y_pred, target_names=[CLASS_LABELS[0], CLASS_LABELS[1]]))
-    
-    cm = confusion_matrix(y_test, y_pred)
-    print(f"\nConfusion Matrix:\n{cm}")
-    
-    metrics = {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "roc_auc": roc_auc,
-        "confusion_matrix": cm,
-        "y_pred": y_pred,
-        "y_pred_proba": y_pred_proba,
-        "y_true": y_test
-    }
-    
-    return metrics
+    except Exception as e:
+        print(f"ERROR in evaluate_model: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 def cross_validate_model(X, y, cv=5):
@@ -459,91 +811,137 @@ def predict_single_image(image_path, model, scaler):
 # MAIN TRAINING PIPELINE
 # ==========================================
 def main():
-    """Main training pipeline - optimized for performance."""
+    """Main training pipeline - optimized for performance and crash prevention."""
     print("\n" + "="*60)
     print("HOG + SVM MODEL FOR PCB ORIENTATION DETECTION")
     print("="*60)
+    print("*** CRASH-PROOF VERSION WITH MEMORY MANAGEMENT ***\n")
     
-    start_time = time.time()
-    
-    # Step 1: Load data
-    print("\nSTEP 1: Loading Data")
-    print("-"*60)
-    step_start = time.time()
-    images, labels, _ = load_data(DATA_DIR)
-    print(f"✓ Data loading completed in {time.time() - step_start:.1f}s")
-    
-    # Step 2: Split data
-    print("\nSTEP 2: Splitting Data")
-    print("-"*60)
-    
-    # First split: train+val vs test
-    X_temp, X_test, y_temp, y_test = train_test_split(
-        images, labels, test_size=TEST_SPLIT, random_state=RANDOM_STATE, stratify=labels
-    )
-    
-    # Second split: train vs val
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=VAL_SPLIT/(1-TEST_SPLIT), 
-        random_state=RANDOM_STATE, stratify=y_temp
-    )
-    
-    print(f"Training set size: {len(X_train)}")
-    print(f"Validation set size: {len(X_val)}")
-    print(f"Test set size: {len(X_test)}")
-    
-    # Step 3: Extract HOG features
-    print("\nSTEP 3: Extracting HOG Features")
-    print("-"*60)
-    
-    step_start = time.time()
-    X_train_features = extract_features_batch(X_train)
-    X_val_features = extract_features_batch(X_val)
-    X_test_features = extract_features_batch(X_test)
-    print(f"✓ Feature extraction completed in {time.time() - step_start:.1f}s")
-    print(f"Feature vector size: {X_train_features.shape[1]}")
-    
-    # Step 4: Train model with hyperparameter tuning
-    print("\nSTEP 4: Training Model (with Hyperparameter Optimization)")
-    print("-"*60)
-    
-    step_start = time.time()
-    model, scaler = train_hog_svm(X_train_features, y_train, X_val_features, y_val, use_grid_search=True)
-    print(f"✓ Model training completed in {time.time() - step_start:.1f}s")
-    
-    # Step 5: Evaluation on test set
-    print("\nSTEP 5: Test Set Evaluation")
-    print("-"*60)
-    
-    test_metrics = evaluate_model(model, scaler, X_test_features, y_test, "Test")
-    
-    # Step 6: Visualizations (non-blocking)
-    print("\nSTEP 6: Generating Visualizations")
-    print("-"*60)
-    
-    step_start = time.time()
-    plot_confusion_matrix(test_metrics['confusion_matrix'], "Test")
-    plot_roc_curve(test_metrics['y_true'], test_metrics['y_pred_proba'], "Test")
-    print(f"✓ Visualizations completed in {time.time() - step_start:.1f}s")
-    
-    # Step 7: Save model
-    print("\nSTEP 7: Saving Model")
-    print("-"*60)
-    
-    save_model(model, scaler)
-    
-    # Summary
-    total_time = time.time() - start_time
-    print("\n" + "="*60)
-    print("TRAINING SUMMARY")
-    print("="*60)
-    print(f"Test Accuracy:  {test_metrics['accuracy']:.4f}")
-    print(f"Test Precision: {test_metrics['precision']:.4f}")
-    print(f"Test Recall:    {test_metrics['recall']:.4f}")
-    print(f"Test F1-Score:  {test_metrics['f1']:.4f}")
-    print(f"Test ROC-AUC:   {test_metrics['roc_auc']:.4f}")
-    print(f"\nTotal training time: {total_time:.1f}s ({total_time/60:.1f} minutes)")
-    print("="*60 + "\n")
+    try:
+        start_time = time.time()
+        
+        # STEP 1: Scan data directory (no images loaded to memory)
+        print("STEP 1: Scanning Data Directory")
+        print("-"*60)
+        step_start = time.time()
+        image_paths, all_labels = get_image_paths(DATA_DIR)
+        print(f"✓ Scan completed in {time.time() - step_start:.1f}s\n")
+        
+        # STEP 2: Split data (still just paths, no images in memory)
+        print("STEP 2: Splitting Data (by path)")
+        print("-"*60)
+        
+        # Convert to arrays for splitting
+        image_paths_arr = np.array(image_paths)
+        labels_arr = np.array(all_labels)
+        
+        # First split: train+val vs test
+        X_temp_paths, X_test_paths, y_temp, y_test = train_test_split(
+            image_paths_arr, labels_arr, test_size=TEST_SPLIT, 
+            random_state=RANDOM_STATE, stratify=labels_arr
+        )
+        
+        # Second split: train vs val
+        X_train_paths, X_val_paths, y_train, y_val = train_test_split(
+            X_temp_paths, y_temp, test_size=VAL_SPLIT/(1-TEST_SPLIT), 
+            random_state=RANDOM_STATE, stratify=y_temp
+        )
+        
+        print(f"Training set: {len(X_train_paths)} images")
+        print(f"Validation set: {len(X_val_paths)} images")
+        print(f"Test set: {len(X_test_paths)} images\n")
+        
+        # STEP 3: Extract features from training set
+        print("STEP 3: Extracting Training Set Features")
+        print("-"*60)
+        print(f"Processing {len(X_train_paths)} training images...")
+        step_start = time.time()
+        X_train_features, y_train_filtered = load_and_extract_features(X_train_paths, y_train)
+        train_extract_time = time.time() - step_start
+        print(f"✓ Training features extracted in {train_extract_time:.1f}s\n")
+        
+        # STEP 4: Extract features from validation set
+        print("STEP 4: Extracting Validation Set Features")
+        print("-"*60)
+        print(f"Processing {len(X_val_paths)} validation images...")
+        step_start = time.time()
+        X_val_features, y_val_filtered = load_and_extract_features(X_val_paths, y_val)
+        val_extract_time = time.time() - step_start
+        print(f"✓ Validation features extracted in {val_extract_time:.1f}s\n")
+        
+        # STEP 5: Extract features from test set
+        print("STEP 5: Extracting Test Set Features")
+        print("-"*60)
+        print(f"Processing {len(X_test_paths)} test images...")
+        step_start = time.time()
+        X_test_features, y_test_filtered = load_and_extract_features(X_test_paths, y_test)
+        test_extract_time = time.time() - step_start
+        print(f"✓ Test features extracted in {test_extract_time:.1f}s\n")
+        
+        # Force garbage collection before training
+        gc.collect()
+        
+        # STEP 6: Train model with hyperparameter tuning
+        print("STEP 6: Training Model (with Hyperparameter Optimization)")
+        print("-"*60)
+        
+        step_start = time.time()
+        model, scaler = train_hog_svm(X_train_features, y_train_filtered, 
+                                       X_val_features, y_val_filtered, use_grid_search=True)
+        train_time = time.time() - step_start
+        print(f"✓ Model training completed in {train_time:.1f}s\n")
+        
+        # STEP 7: Evaluation on test set
+        print("STEP 7: Test Set Evaluation")
+        print("-"*60)
+        
+        test_metrics = evaluate_model(model, scaler, X_test_features, y_test_filtered, "Test")
+        
+        # STEP 8: Visualizations (non-blocking)
+        print("\nSTEP 8: Generating Visualizations")
+        print("-"*60)
+        
+        step_start = time.time()
+        plot_confusion_matrix(test_metrics['confusion_matrix'], "Test")
+        plot_roc_curve(test_metrics['y_true'], test_metrics['y_pred_proba'], "Test")
+        viz_time = time.time() - step_start
+        print(f"✓ Visualizations completed in {viz_time:.1f}s\n")
+        
+        # STEP 9: Save model
+        print("STEP 9: Saving Model")
+        print("-"*60)
+        
+        save_model(model, scaler)
+        
+        # Summary
+        total_time = time.time() - start_time
+        print("\n" + "="*60)
+        print("✓✓✓ TRAINING COMPLETED SUCCESSFULLY ✓✓✓")
+        print("="*60)
+        print(f"\nTest Accuracy:  {test_metrics['accuracy']:.4f}")
+        print(f"Test Precision: {test_metrics['precision']:.4f}")
+        print(f"Test Recall:    {test_metrics['recall']:.4f}")
+        print(f"Test F1-Score:  {test_metrics['f1']:.4f}")
+        print(f"Test ROC-AUC:   {test_metrics['roc_auc']:.4f}")
+        
+        print(f"\nTiming Breakdown:")
+        print(f"  Training features:    {train_extract_time:.1f}s")
+        print(f"  Validation features:  {val_extract_time:.1f}s")
+        print(f"  Test features:        {test_extract_time:.1f}s")
+        print(f"  Model training:       {train_time:.1f}s")
+        print(f"  Visualizations:       {viz_time:.1f}s")
+        print(f"  Total time:           {total_time:.1f}s ({total_time/60:.1f} minutes)")
+        print("="*60 + "\n")
+        
+    except KeyboardInterrupt:
+        print("\n\n⚠ Training interrupted by user")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n\n✗✗✗ CRITICAL ERROR ✗✗✗")
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
