@@ -51,13 +51,17 @@ def extract_hog_features(image, visualize=False):
     
     Args:
         image: Input image (BGR format from cv2)
-        visualize: Boolean to return visualization
+        visualize: Boolean to return visualization (not currently used)
     
     Returns:
-        HOG feature vector or tuple of (features, visualization)
+        HOG feature vector
     """
     if len(image.shape) == 3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Ensure image is the correct size
+    if image.shape != (IMG_SIZE, IMG_SIZE):
+        image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
     
     hog = cv2.HOGDescriptor(
         (IMG_SIZE, IMG_SIZE),
@@ -69,14 +73,6 @@ def extract_hog_features(image, visualize=False):
     
     features = hog.compute(image)
     features = features.flatten()
-    
-    if visualize:
-        img_resized = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
-        h, w = img_resized.shape
-        hog_image = np.zeros((h, w))
-        features_viz, hog_image = cv2.HOGDescriptor_getDescriptors(hog, img_resized, winStride=(8, 8), padding=(0, 0), locations=None)
-        
-        return features, hog_image
     
     return features
 
