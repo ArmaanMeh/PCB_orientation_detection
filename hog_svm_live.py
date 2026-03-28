@@ -1,6 +1,7 @@
 """
 Live Video Classification using HOG + SVM Model
 Real-time PCB orientation detection with performance metrics
+OPTIMIZED: Uses cached HOGDescriptor for maximum performance
 """
 
 import cv2
@@ -20,13 +21,16 @@ HOG_PIXELS_PER_CELL = (16, 16)
 HOG_CELLS_PER_BLOCK = (2, 2)
 CONFIDENCE_THRESHOLD = 0.3
 
+# Global HOG descriptor (created once for efficiency)
+HOG_DESCRIPTOR = cv2.HOGDescriptor()
+
 
 # ==========================================
-# HOG FEATURE EXTRACTION (same as training)
+# HOG FEATURE EXTRACTION (optimized)
 # ==========================================
 def extract_hog_features(image):
     """
-    Extract HOG features from an image.
+    Extract HOG features from an image - optimized with cached HOGDescriptor.
     
     Args:
         image: Input image (BGR format from cv2)
@@ -40,10 +44,8 @@ def extract_hog_features(image):
     if image.shape != (IMG_SIZE, IMG_SIZE):
         image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
     
-    # Use default HOGDescriptor - works with standard parameters
-    hog = cv2.HOGDescriptor()
-    
-    features = hog.compute(image, winStride=(8, 8), padding=(0, 0))
+    # Use cached HOGDescriptor for performance
+    features = HOG_DESCRIPTOR.compute(image, winStride=(8, 8), padding=(0, 0))
     features = features.flatten()
     
     return features

@@ -1,6 +1,7 @@
 """
 Model Comparison and Evaluation Script
 Compare HOG+SVM with CNN model on test data
+OPTIMIZED: Uses cached HOGDescriptor, non-blocking plotting
 """
 
 import cv2
@@ -14,6 +15,8 @@ from sklearn.metrics import (
     confusion_matrix, classification_report, ConfusionMatrixDisplay
 )
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')  # Non-blocking backend
 import seaborn as sns
 import time
 
@@ -33,30 +36,40 @@ HOG_SCALER_PATH = "Export/hog_svm_scaler.pkl"
 
 TEST_DATA_DIR = "Data/Processed_data"
 
+# Global HOG descriptor (created once for efficiency)
+HOG_DESCRIPTOR = cv2.HOGDescriptor()
+
 
 # ==========================================
-# HOG FEATURE EXTRACTION
+# HOG FEATURE EXTRACTION (optimized)
 # ==========================================
 def extract_hog_features(image):
-    """Extract HOG features from image."""
+    """Extract HOG features from image - optimized with cached HOGDescriptor."""
     if len(image.shape) == 3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
     if image.shape != (IMG_SIZE, IMG_SIZE):
         image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
     
-    # Use default HOGDescriptor - works with standard parameters
-    hog = cv2.HOGDescriptor()
-    
-    features = hog.compute(image, winStride=(8, 8), padding=(0, 0))
+    # Use cached HOGDescriptor for performance
+    features = HOG_DESCRIPTOR.compute(image, winStride=(8, 8), padding=(0, 0))
     return features.flatten()
 
 
 # ==========================================
 # DATA LOADING
 # ==========================================
-def load_test_data(data_dir=TEST_DATA_DIR):
-    """Load test data from directory."""
+def load_test_data(data_dir=TEST_DATA_DIR, limit=None):
+    """
+    Load test data from directory.
+    
+    Args:
+        data_dir: Path to data directory
+        limit: Maximum number of images per class (None for all images)
+    
+    Returns:
+        Tuple of (images, labels, filenames)
+    """
     images = []
     labels = []
     filenames = []
@@ -66,36 +79,42 @@ def load_test_data(data_dir=TEST_DATA_DIR):
     # Load Pass data
     pass_dir = os.path.join(data_dir, "Pass_data")
     if os.path.exists(pass_dir):
-        for img_file in os.listdir(pass_dir)[:10]:  # Use first 10 for quick testing
-            if img_file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                img_path = os.path.join(pass_dir, img_file)
-                try:
-                    img = cv2.imread(img_path)
-                    if img is not None:
-                        img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-                        images.append(img)
-                        labels.append(1)
-                        filenames.append(img_file)
-                except Exception as e:
-                    print(f"Error loading {img_path}: {e}")
+        pass_files = [f for f in os.listdir(pass_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        if limit:
+            pass_files = pass_files[:limit]
+        print(f"  Loading {len(pass_files)} Pass images...")
+        for img_file in pass_files:
+            img_path = os.path.join(pass_dir, img_file)
+            try:
+                img = cv2.imread(img_path)
+                if img is not None:
+                    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+                    images.append(img)
+                    labels.append(1)
+                    filenames.append(img_file)
+            except Exception as e:
+                print(f"Error loading {img_path}: {e}")
     
     # Load Fail data
     fail_dir = os.path.join(data_dir, "Fail_data")
     if os.path.exists(fail_dir):
-        for img_file in os.listdir(fail_dir)[:10]:  # Use first 10 for quick testing
-            if img_file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                img_path = os.path.join(fail_dir, img_file)
-                try:
-                    img = cv2.imread(img_path)
-                    if img is not None:
-                        img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-                        images.append(img)
-                        labels.append(0)
-                        filenames.append(img_file)
-                except Exception as e:
-                    print(f"Error loading {img_path}: {e}")
+        fail_files = [f for f in os.listdir(fail_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        if limit:
+            fail_files = fail_files[:limit]
+        print(f"  Loading {len(fail_files)} Fail images...")
+        for img_file in fail_files:
+            img_path = os.path.join(fail_dir, img_file)
+            try:
+                img = cv2.imread(img_path)
+                if img is not None:
+                    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+                    images.append(img)
+                    labels.append(0)
+                    filenames.append(img_file)
+            except Exception as e:
+                print(f"Error loading {img_path}: {e}")
     
-    print(f"Loaded {len(images)} test images")
+    print(f"✓ Loaded {len(images)} test images total")
     
     return np.array(images), np.array(labels), filenames
 
@@ -231,7 +250,7 @@ def compare_models(y_true, y_pred_cnn, y_pred_hog_svm):
 # VISUALIZATION
 # ==========================================
 def plot_model_comparison(y_true, y_pred_cnn, y_pred_hog_svm, cnn_metrics, hog_svm_metrics):
-    """Plot comparison visualizations."""
+    """Plot comparison visualizations (non-blocking)."""
     print("\nGenerating comparison visualizations...")
     
     # 1. Confusion Matrices Side by Side
@@ -253,8 +272,10 @@ def plot_model_comparison(y_true, y_pred_cnn, y_pred_hog_svm, cnn_metrics, hog_s
     axes[1].set_xlabel('Predicted Label')
     
     plt.tight_layout()
-    plt.savefig('Export/confusion_matrices_comparison.png', dpi=150, bbox_inches='tight')
-    plt.show()
+    filepath = 'Export/confusion_matrices_comparison.png'
+    plt.savefig(filepath, dpi=100, bbox_inches='tight')
+    plt.close()  # Close instead of show to prevent blocking
+    print(f"✓ Confusion matrices saved to {filepath}")
     
     # 2. Metrics Comparison Bar Chart
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -286,10 +307,11 @@ def plot_model_comparison(y_true, y_pred_cnn, y_pred_hog_svm, cnn_metrics, hog_s
                    f'{height:.3f}', ha='center', va='bottom', fontsize=9)
     
     plt.tight_layout()
-    plt.savefig('Export/metrics_comparison.png', dpi=150, bbox_inches='tight')
-    plt.show()
-    
-    print("✓ Visualizations saved to Export/")
+    filepath = 'Export/metrics_comparison.png'
+    plt.savefig(filepath, dpi=100, bbox_inches='tight')
+    plt.close()  # Close instead of show to prevent blocking
+    print(f"✓ Metrics comparison saved to {filepath}")
+    print("✓ All visualizations saved to Export/")
 
 
 def predict_on_single_image(image_path, cnn_model, hog_svm_model, hog_scaler):

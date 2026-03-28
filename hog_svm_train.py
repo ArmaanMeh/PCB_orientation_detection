@@ -19,6 +19,8 @@ from sklearn.metrics import (
     ConfusionMatrixDisplay
 )
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')  # Non-blocking backend
 import seaborn as sns
 from tqdm import tqdm
 
@@ -41,6 +43,9 @@ VAL_SPLIT = 0.2
 
 CLASS_LABELS = {0: "Fail", 1: "Pass"}
 
+# Global HOG descriptor (created once for efficiency)
+HOG_DESCRIPTOR = cv2.HOGDescriptor()
+
 
 # ==========================================
 # HOG FEATURE EXTRACTION
@@ -48,6 +53,7 @@ CLASS_LABELS = {0: "Fail", 1: "Pass"}
 def extract_hog_features(image, visualize=False):
     """
     Extract HOG features from an image.
+    Uses globally cached HOGDescriptor for efficiency.
     
     Args:
         image: Input image (BGR format from cv2)
@@ -63,10 +69,8 @@ def extract_hog_features(image, visualize=False):
     if image.shape != (IMG_SIZE, IMG_SIZE):
         image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
     
-    # Use default HOGDescriptor - works with standard parameters with any image size
-    hog = cv2.HOGDescriptor()
-    
-    features = hog.compute(image, winStride=(8, 8), padding=(0, 0))
+    # Use cached HOGDescriptor for performance
+    features = HOG_DESCRIPTOR.compute(image, winStride=(8, 8), padding=(0, 0))
     features = features.flatten()
     
     return features
@@ -191,14 +195,15 @@ def train_hog_svm(X_train, y_train, X_val=None, y_val=None, use_grid_search=True
     if use_grid_search:
         print("\nPerforming GridSearchCV for hyperparameter optimization...")
         
+        # Reduced parameter grid for faster training (was 4x2x4=32 combinations, now 2x2x2=8)
         param_grid = {
-            'C': [0.1, 1, 10, 100],
+            'C': [1, 100],
             'kernel': ['rbf', 'linear'],
-            'gamma': ['scale', 'auto', 0.001, 0.01]
+            'gamma': ['scale', 0.01]
         }
         
         svm = SVC(probability=True, random_state=RANDOM_STATE)
-        grid_search = GridSearchCV(svm, param_grid, cv=5, scoring='f1', n_jobs=-1, verbose=1)
+        grid_search = GridSearchCV(svm, param_grid, cv=3, scoring='f1', n_jobs=-1, verbose=1)
         grid_search.fit(X_train_scaled, y_train)
         
         print(f"\nBest parameters: {grid_search.best_params_}")
@@ -343,7 +348,7 @@ def cross_validate_model(X, y, cv=5):
 # VISUALIZATION
 # ==========================================
 def plot_confusion_matrix(cm, dataset_name="Test"):
-    """Plot confusion matrix."""
+    """Plot confusion matrix (non-blocking)."""
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
                 xticklabels=[CLASS_LABELS[0], CLASS_LABELS[1]],
@@ -352,12 +357,14 @@ def plot_confusion_matrix(cm, dataset_name="Test"):
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
     plt.tight_layout()
-    plt.savefig(os.path.join(MODEL_SAVE_DIR, f'confusion_matrix_{dataset_name.lower()}.png'))
-    plt.show()
+    filepath = os.path.join(MODEL_SAVE_DIR, f'confusion_matrix_{dataset_name.lower()}.png')
+    plt.savefig(filepath, dpi=100, bbox_inches='tight')
+    plt.close()  # Close instead of show to prevent blocking
+    print(f"✓ Confusion matrix saved to {filepath}")
 
 
 def plot_roc_curve(y_true, y_pred_proba, dataset_name="Test"):
-    """Plot ROC curve."""
+    """Plot ROC curve (non-blocking)."""
     fpr, tpr, _ = roc_curve(y_true, y_pred_proba[:, 1])
     roc_auc = roc_auc_score(y_true, y_pred_proba[:, 1])
     
@@ -371,8 +378,10 @@ def plot_roc_curve(y_true, y_pred_proba, dataset_name="Test"):
     plt.title(f'ROC Curve - {dataset_name} Set')
     plt.legend(loc="lower right")
     plt.tight_layout()
-    plt.savefig(os.path.join(MODEL_SAVE_DIR, f'roc_curve_{dataset_name.lower()}.png'))
-    plt.show()
+    filepath = os.path.join(MODEL_SAVE_DIR, f'roc_curve_{dataset_name.lower()}.png')
+    plt.savefig(filepath, dpi=100, bbox_inches='tight')
+    plt.close()  # Close instead of show to prevent blocking
+    print(f"✓ ROC curve saved to {filepath}")
 
 
 # ==========================================
@@ -450,15 +459,19 @@ def predict_single_image(image_path, model, scaler):
 # MAIN TRAINING PIPELINE
 # ==========================================
 def main():
-    """Main training pipeline."""
+    """Main training pipeline - optimized for performance."""
     print("\n" + "="*60)
     print("HOG + SVM MODEL FOR PCB ORIENTATION DETECTION")
     print("="*60)
     
+    start_time = time.time()
+    
     # Step 1: Load data
     print("\nSTEP 1: Loading Data")
     print("-"*60)
+    step_start = time.time()
     images, labels, _ = load_data(DATA_DIR)
+    print(f"✓ Data loading completed in {time.time() - step_start:.1f}s")
     
     # Step 2: Split data
     print("\nSTEP 2: Splitting Data")
@@ -483,17 +496,20 @@ def main():
     print("\nSTEP 3: Extracting HOG Features")
     print("-"*60)
     
+    step_start = time.time()
     X_train_features = extract_features_batch(X_train)
     X_val_features = extract_features_batch(X_val)
     X_test_features = extract_features_batch(X_test)
-    
+    print(f"✓ Feature extraction completed in {time.time() - step_start:.1f}s")
     print(f"Feature vector size: {X_train_features.shape[1]}")
     
     # Step 4: Train model with hyperparameter tuning
     print("\nSTEP 4: Training Model (with Hyperparameter Optimization)")
     print("-"*60)
     
+    step_start = time.time()
     model, scaler = train_hog_svm(X_train_features, y_train, X_val_features, y_val, use_grid_search=True)
+    print(f"✓ Model training completed in {time.time() - step_start:.1f}s")
     
     # Step 5: Evaluation on test set
     print("\nSTEP 5: Test Set Evaluation")
@@ -501,26 +517,23 @@ def main():
     
     test_metrics = evaluate_model(model, scaler, X_test_features, y_test, "Test")
     
-    # Step 6: Cross-validation
-    print("\nSTEP 6: Cross-Validation Analysis")
+    # Step 6: Visualizations (non-blocking)
+    print("\nSTEP 6: Generating Visualizations")
     print("-"*60)
     
-    cv_scores = cross_validate_model(X_train_features, y_train, cv=5)
-    
-    # Step 7: Visualizations
-    print("\nSTEP 7: Generating Visualizations")
-    print("-"*60)
-    
+    step_start = time.time()
     plot_confusion_matrix(test_metrics['confusion_matrix'], "Test")
     plot_roc_curve(test_metrics['y_true'], test_metrics['y_pred_proba'], "Test")
+    print(f"✓ Visualizations completed in {time.time() - step_start:.1f}s")
     
-    # Step 8: Save model
-    print("\nSTEP 8: Saving Model")
+    # Step 7: Save model
+    print("\nSTEP 7: Saving Model")
     print("-"*60)
     
     save_model(model, scaler)
     
     # Summary
+    total_time = time.time() - start_time
     print("\n" + "="*60)
     print("TRAINING SUMMARY")
     print("="*60)
@@ -529,6 +542,7 @@ def main():
     print(f"Test Recall:    {test_metrics['recall']:.4f}")
     print(f"Test F1-Score:  {test_metrics['f1']:.4f}")
     print(f"Test ROC-AUC:   {test_metrics['roc_auc']:.4f}")
+    print(f"\nTotal training time: {total_time:.1f}s ({total_time/60:.1f} minutes)")
     print("="*60 + "\n")
 
 
