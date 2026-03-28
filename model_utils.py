@@ -33,15 +33,13 @@ def extract_hog_features(image):
     if len(image.shape) == 3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    hog = cv2.HOGDescriptor(
-        (IMG_SIZE, IMG_SIZE),
-        HOG_PIXELS_PER_CELL,
-        HOG_CELLS_PER_BLOCK,
-        HOG_ORIENTATIONS,
-        9, 1, -1, 0.2, 0.1, 1.0, 64, 0
-    )
+    if image.shape != (IMG_SIZE, IMG_SIZE):
+        image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
     
-    features = hog.compute(image)
+    # Use default HOGDescriptor - works with standard parameters
+    hog = cv2.HOGDescriptor()
+    
+    features = hog.compute(image, winStride=(8, 8), padding=(0, 0))
     return features.flatten()
 
 
