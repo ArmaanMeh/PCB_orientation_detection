@@ -13,16 +13,45 @@ import time
 # Configuration
 MODEL_PATH = "Export/hog_svm_model.pkl"
 SCALER_PATH = "Export/hog_svm_scaler.pkl"
-IMG_SIZE = 244
+IMG_SIZE = 240
 CLASS_LABELS = {0: "Fail", 1: "Pass"}
 
 HOG_ORIENTATIONS = 9
 HOG_PIXELS_PER_CELL = (16, 16)
 HOG_CELLS_PER_BLOCK = (2, 2)
-CONFIDENCE_THRESHOLD = 0.3
+CONFIDENCE_THRESHOLD = 0.5
+
+
+# ==========================================
+# HOG DESCRIPTOR CONFIGURATION
+# ==========================================
+def create_hog_descriptor():
+    """
+    Create a properly configured HOG descriptor with stable parameters.
+    Must match the training configuration exactly.
+    
+    Returns:
+        Configured HOGDescriptor instance
+    """
+    try:
+        # HOGDescriptor(winSize, blockSize, blockStride, cellSize, nbins,
+        #               derivAperture=1, winSigma=-1, histogramNormType=0,
+        #               L2HysThreshold=0.2, gammaCorrection=True, nlevels=64)
+        hog = cv2.HOGDescriptor(
+            (IMG_SIZE, IMG_SIZE),      # winSize (240x240)
+            (32, 32),                  # blockSize (2 cells of 16x16)
+            (16, 16),                  # blockStride (stride by 1 cell)
+            (16, 16),                  # cellSize
+            HOG_ORIENTATIONS           # nbins (9)
+        )
+        return hog
+    except Exception as e:
+        print(f"Error creating HOGDescriptor: {e}")
+        return cv2.HOGDescriptor()
+
 
 # Global HOG descriptor (created once for efficiency)
-HOG_DESCRIPTOR = cv2.HOGDescriptor()
+HOG_DESCRIPTOR = create_hog_descriptor()
 
 
 # ==========================================
@@ -227,7 +256,7 @@ def main():
     
     # Initialize webcam
     print("\nInitializing webcam...")
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
     
     if not cap.isOpened():
         print("ERROR: Could not open webcam")
