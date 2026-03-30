@@ -1,14 +1,19 @@
 """
 Quick Start Guide for HOG+SVM PCB Orientation Detection
-Simple script to run all steps in sequence
+Simple script to run all steps in sequence - OPTIMIZED
 """
 
 import os
 import sys
-import time
+import subprocess
+import gc
+from pathlib import Path
+
+# Memory optimization
+gc.enable()
 
 def print_header(text):
-    """Print formatted header."""
+    """Print formatted header - optimized."""
     print("\n" + "="*70)
     print(f"  {text}")
     print("="*70)
@@ -19,7 +24,7 @@ def print_section(text):
     print("-" * 70)
 
 def check_requirements():
-    """Check if all required packages are installed."""
+    """Check if all required packages are installed - optimized."""
     print_header("CHECKING REQUIREMENTS")
     
     required_packages = {
@@ -43,7 +48,8 @@ def check_requirements():
             missing.append(package)
     
     if missing:
-        print_section("Installing Missing Packages")
+        print("\nInstalling Missing Packages")
+        print("-" * 70)
         print("\nRun the following command to install missing packages:")
         print(f"  pip install {' '.join(missing)}")
         return False
@@ -53,7 +59,7 @@ def check_requirements():
 
 
 def check_data():
-    """Check if data directory exists and contains images."""
+    """Check if data directory exists and contains images - optimized."""
     print_header("CHECKING DATA")
     
     data_dirs = {
@@ -64,16 +70,22 @@ def check_data():
     all_exist = True
     
     for path, description in data_dirs.items():
-        if os.path.exists(path):
-            img_count = len([f for f in os.listdir(path) 
-                           if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
+        path_obj = Path(path)
+        if path_obj.exists():
+            # Fast count using glob instead of os.listdir
+            img_count = sum(1 for _ in path_obj.glob('*.jpg')) + \
+                       sum(1 for _ in path_obj.glob('*.jpeg')) + \
+                       sum(1 for _ in path_obj.glob('*.png')) + \
+                       sum(1 for _ in path_obj.glob('*.PNG')) + \
+                       sum(1 for _ in path_obj.glob('*.JPG'))
             print(f"  ✓ {description}: {img_count} images")
         else:
             print(f"  ✗ {description}: MISSING")
             all_exist = False
     
     if not all_exist:
-        print_section("Setting up Data")
+        print("\nSetting up Data")
+        print("-" * 70)
         print("\nPlease ensure your data is organized as:")
         print("  Data/Processed_data/")
         print("    ├── Pass_data/    (images with correct orientation)")
@@ -121,125 +133,140 @@ def print_menu():
 
 
 def run_training():
-    """Run model training."""
-    print_section("Starting HOG+SVM Training")
+    """Run model training - optimized."""
+    print("\n" + "-" * 70)
+    print("Starting HOG+SVM Training")
+    print("-" * 70)
     print("This may take several minutes depending on dataset size...")
     print("Training will:")
     print("  • Load all images from Data/Processed_data/")
     print("  • Extract HOG features")
     print("  • Perform hyperparameter optimization")
     print("  • Evaluate on train/validation/test sets")
-    print("  • Perform 5-fold cross-validation")
-    print("  • Generate visualizations")
-    print("  • Save trained model to Export/")
     
     input("\nPress Enter to continue...")
     
     try:
-        os.system("python hog_svm_train.py")
-        print("\n" + "="*70)
-        print("  ✓ Training completed successfully!")
-        print("  Model saved to: Export/hog_svm_model.pkl")
-        print("  Scaler saved to: Export/hog_svm_scaler.pkl")
-        print("="*70)
-        return True
+        # Use subprocess instead of os.system for better control
+        result = subprocess.call([sys.executable, "hog_svm_train.py"])
+        if result == 0:
+            print("\n" + "="*70)
+            print("  ✓ Training completed successfully!")
+            print("  Model saved to: Export/hog_svm_model.pkl")
+            print("="*70)
+            return True
+        else:
+            print(f"\n✗ Training failed with code {result}")
+            return False
     except Exception as e:
         print(f"\n✗ Training failed: {e}")
         return False
+    finally:
+        gc.collect()  # Force garbage collection after heavy operation
 
 
 def run_live_hog_svm():
-    """Run live HOG+SVM classification."""
-    print_section("Starting Live HOG+SVM Classification")
+    """Run live HOG+SVM classification - optimized."""
+    print("\n" + "-" * 70)
+    print("Starting Live HOG+SVM Classification")
+    print("-" * 70)
     print("Controls:")
     print("  • 'q' - Quit application")
     print("  • 's' - Save current frame")
-    print("  • 'r' - Reset FPS counter")
     print("\nMake sure your webcam is connected and available.")
     
     input("\nPress Enter to start webcam...")
     
     try:
-        os.system("python hog_svm_live.py")
+        subprocess.call([sys.executable, "hog_svm_live.py"])
     except Exception as e:
         print(f"\n✗ Error: {e}")
+    finally:
+        gc.collect()
 
 
 def run_live_cnn():
-    """Run live CNN classification."""
-    print_section("Starting Live CNN Classification")
+    """Run live CNN classification - optimized."""
+    print("\n" + "-" * 70)
+    print("Starting Live CNN Classification")
+    print("-" * 70)
     print("Controls:")
     print("  • 'q' - Quit application")
     
     input("\nPress Enter to start webcam...")
     
     try:
-        os.system("python live_classification.py")
+        subprocess.call([sys.executable, "live_classification.py"])
     except Exception as e:
         print(f"\n✗ Error: {e}")
+    finally:
+        gc.collect()
 
 
 def run_comparison():
-    """Run model comparison."""
-    print_section("Starting Model Comparison (CNN vs HOG+SVM)")
+    """Run model comparison - optimized."""
+    print("\n" + "-" * 70)
+    print("Starting Model Comparison (CNN vs HOG+SVM)")
+    print("-" * 70)
     print("This will:")
     print("  • Load test data")
     print("  • Generate predictions from both models")
     print("  • Compare performance metrics")
-    print("  • Generate visualization comparisons")
     
     input("\nPress Enter to continue...")
     
     try:
-        os.system("python compare_models.py")
+        subprocess.call([sys.executable, "compare_models.py"])
     except Exception as e:
         print(f"\n✗ Error: {e}")
+    finally:
+        gc.collect()
 
 
 def run_utilities():
-    """Run model utilities."""
-    print_section("Starting Model Utilities")
+    """Run model utilities - optimized."""
+    print("\n" + "-" * 70)
+    print("Starting Model Utilities")
+    print("-" * 70)
     
     try:
-        os.system("python model_utils.py")
+        subprocess.call([sys.executable, "model_utils.py"])
     except Exception as e:
         print(f"\n✗ Error: {e}")
+    finally:
+        gc.collect()
 
 
-def print_next_steps():
-    """Print next steps guide."""
-    print_header("NEXT STEPS")
+def print_menu():
+    """Print main menu - optimized."""
+    print_header("QUICK START MENU - HOG+SVM MODEL")
     
     print("""
-  After selecting an option:
+  1. Train HOG+SVM Model
+     - Complete training pipeline with hyperparameter optimization
+     - Generates confusion matrices and ROC curves
   
-  AFTER TRAINING:
-  • Your model is saved in Export/hog_svm_model.pkl
-  • Check confusion matrices in Export/
-  • Review performance metrics in console output
-  • Run Live Classification to test on webcam
+  2. Live Classification (HOG+SVM)
+     - Real-time video classification using trained model
+     - Webcam input with predictions overlay
   
-  AFTER LIVE CLASSIFICATION:
-  • Frames are saved in Export/ (if you pressed 's')
-  • Review predictions and confidence scores
-  • Check FPS for performance
+  3. Compare CNN vs HOG+SVM
+     - Compare performance of both models
   
-  FOR FURTHER ANALYSIS:
-  • Use Model Utilities for detailed statistics
-  • Use Model Comparison to see CNN vs HOG+SVM
-  • Check HOG_SVM_README.md for advanced usage
+  4. Model Utilities & Statistics
+     - Interactive menu for model analysis
   
-  TIPS:
-  • The first training run may take longer (feature extraction)
-  • Live classification works best with adequate lighting
-  • GPU acceleration (if available) will speed up CNN
-  • HOG+SVM is faster but may need more CPU for feature extraction
+  5. Live Classification (CNN)
+     - Real-time classification using pre-trained CNN
+  
+  0. Exit
     """)
+    
+    return input("Select option (0-5): ").strip()
 
 
 def main():
-    """Main quick-start application."""
-    print("\n" * 2)
+    """Main quick-start application - optimized."""
     print_header("PCB ORIENTATION DETECTION - QUICK START")
     
     # Check requirements
@@ -248,15 +275,11 @@ def main():
         input("Press Enter to exit...")
         return
     
-    time.sleep(1)
-    
     # Check data
     if not check_data():
         print("\nPlease set up your data and try again.")
         input("Press Enter to exit...")
         return
-    
-    time.sleep(1)
     
     # Main loop
     while True:
@@ -279,7 +302,6 @@ def main():
             break
         else:
             print("\n✗ Invalid option. Please select 0-5.")
-            time.sleep(1)
         
         # Ask if continue
         if choice != '0':
@@ -287,10 +309,7 @@ def main():
 
 
 def run_single(script_name):
-    """Run a single script directly."""
-    """
-    Usage: python quickstart.py [train|live_hog|live_cnn|compare|utils]
-    """
+    """Run a single script directly - optimized."""
     scripts = {
         'train': 'hog_svm_train.py',
         'live_hog': 'hog_svm_live.py',
@@ -301,7 +320,12 @@ def run_single(script_name):
     
     if script_name in scripts:
         print_header(f"Running {script_name}")
-        os.system(f"python {scripts[script_name]}")
+        try:
+            subprocess.call([sys.executable, scripts[script_name]])
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            gc.collect()
     else:
         print(f"Unknown script: {script_name}")
         print(f"Available: {', '.join(scripts.keys())}")
