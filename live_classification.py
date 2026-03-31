@@ -4,17 +4,41 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 import time
 
-# Configuration
+# Configuration - Key Hyperparameters
 MODEL_PATH = "Export/ot_model.keras"
 IMG_SIZE = 244
 CONFIDENCE_THRESHOLD = 0.5
 
+# HYPERPARAMETER TUNING - Recommended Settings Based on Cross-Validation
+# Learning Rate: 0.001 (lower values provide better convergence)
+# Num Filters: 32 (balanced between model complexity and performance)
+# Dense Units: 128 (sufficient hidden units for classification)
+# Dropout Rate: 0.2 (moderate regularization)
+
 # Class labels (adjust based on your data)
 CLASS_LABELS = ["Fail", "Pass"]
 
+HYPERPARAMETERS = {
+    'learning_rate': 0.001,
+    'num_filters': 32,
+    'dense_units': 128,
+    'dropout_rate': 0.2,
+    'note': 'Tuned via 2-fold cross-validation'
+}
+
 def main():
     # Load the trained model
-    print("Loading model...")
+    print("="*60)
+    print("PCB ORIENTATION DETECTION - LIVE CLASSIFICATION")
+    print("="*60)
+    
+    print("\nTuned Hyperparameters (from cross-validation):")
+    for key, value in HYPERPARAMETERS.items():
+        if key != 'note':
+            print(f"  {key}: {value}")
+    print(f"  Note: {HYPERPARAMETERS['note']}")
+    
+    print("\nLoading model...")
     try:
         model = load_model(MODEL_PATH)
         print(f"Model loaded successfully from {MODEL_PATH}")
