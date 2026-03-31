@@ -9,9 +9,21 @@ import sys
 import time
 import gc
 import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers, models, optimizers, callbacks
+
+try:
+    import tensorflow as tf
+    from tensorflow import keras  # type: ignore
+    from tensorflow.keras import layers, models, optimizers, callbacks  # type: ignore
+except ImportError:
+    print("WARNING: TensorFlow not installed. Install with: pip install tensorflow")
+    # Fallback stubs for type hints
+    tf = None
+    keras = None
+    layers = None
+    models = None
+    optimizers = None
+    callbacks = None
+
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
