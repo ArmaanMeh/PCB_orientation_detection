@@ -808,130 +808,162 @@ def predict_single_image(image_path, model, scaler):
 
 
 # ==========================================
-# MAIN TRAINING PIPELINE
+# MAIN TRAINING PIPELINE WITH 2-FOLD CV
 # ==========================================
 def main():
-    """Main training pipeline - optimized for performance and crash prevention."""
-    print("\n" + "="*60)
+    """Main training pipeline with 2-fold cross-validation."""
+    from sklearn.model_selection import StratifiedKFold
+    
+    print("\n" + "="*70)
     print("HOG + SVM MODEL FOR PCB ORIENTATION DETECTION")
-    print("="*60)
-    print("*** CRASH-PROOF VERSION WITH MEMORY MANAGEMENT ***\n")
+    print("WITH 2-FOLD CROSS-VALIDATION & HYPERPARAMETER TUNING")
+    print("="*70)
+    print("*** CONSOLIDATED TRAINER WITH MEMORY MANAGEMENT ***\n")
     
     try:
         start_time = time.time()
         
-        # STEP 1: Scan data directory (no images loaded to memory)
+        # STEP 1: Scan data directory
         print("STEP 1: Scanning Data Directory")
-        print("-"*60)
+        print("-"*70)
         step_start = time.time()
         image_paths, all_labels = get_image_paths(DATA_DIR)
-        print(f"✓ Scan completed in {time.time() - step_start:.1f}s\n")
-        
-        # STEP 2: Split data (still just paths, no images in memory)
-        print("STEP 2: Splitting Data (by path)")
-        print("-"*60)
-        
-        # Convert to arrays for splitting
         image_paths_arr = np.array(image_paths)
         labels_arr = np.array(all_labels)
+        print(f"✓ Scan completed in {time.time() - step_start:.1f}s\n")
         
-        # First split: train+val vs test
-        X_temp_paths, X_test_paths, y_temp, y_test = train_test_split(
-            image_paths_arr, labels_arr, test_size=TEST_SPLIT, 
-            random_state=RANDOM_STATE, stratify=labels_arr
-        )
-        
-        # Second split: train vs val
-        X_train_paths, X_val_paths, y_train, y_val = train_test_split(
-            X_temp_paths, y_temp, test_size=VAL_SPLIT/(1-TEST_SPLIT), 
-            random_state=RANDOM_STATE, stratify=y_temp
-        )
-        
-        print(f"Training set: {len(X_train_paths)} images")
-        print(f"Validation set: {len(X_val_paths)} images")
-        print(f"Test set: {len(X_test_paths)} images\n")
-        
-        # STEP 3: Extract features from training set
-        print("STEP 3: Extracting Training Set Features")
-        print("-"*60)
-        print(f"Processing {len(X_train_paths)} training images...")
+        # STEP 2: Extract all features once
+        print("STEP 2: Extracting ALL Features (for 2-fold CV)")
+        print("-"*70)
+        print(f"Processing {len(image_paths_arr)} images...")
         step_start = time.time()
-        X_train_features, y_train_filtered = load_and_extract_features(X_train_paths, y_train)
-        train_extract_time = time.time() - step_start
-        print(f"✓ Training features extracted in {train_extract_time:.1f}s\n")
+        all_features, all_labels_filtered = load_and_extract_features(image_paths_arr, labels_arr)
+        feature_extract_time = time.time() - step_start
+        print(f"✓ All features extracted in {feature_extract_time:.1f}s\n")
         
-        # STEP 4: Extract features from validation set
-        print("STEP 4: Extracting Validation Set Features")
-        print("-"*60)
-        print(f"Processing {len(X_val_paths)} validation images...")
-        step_start = time.time()
-        X_val_features, y_val_filtered = load_and_extract_features(X_val_paths, y_val)
-        val_extract_time = time.time() - step_start
-        print(f"✓ Validation features extracted in {val_extract_time:.1f}s\n")
-        
-        # STEP 5: Extract features from test set
-        print("STEP 5: Extracting Test Set Features")
-        print("-"*60)
-        print(f"Processing {len(X_test_paths)} test images...")
-        step_start = time.time()
-        X_test_features, y_test_filtered = load_and_extract_features(X_test_paths, y_test)
-        test_extract_time = time.time() - step_start
-        print(f"✓ Test features extracted in {test_extract_time:.1f}s\n")
-        
-        # Force garbage collection before training
+        # Force garbage collection
         gc.collect()
         
-        # STEP 6: Train model with hyperparameter tuning
-        print("STEP 6: Training Model (with Hyperparameter Optimization)")
-        print("-"*60)
+        # STEP 3: 2-FOLD STRATIFIED CROSS-VALIDATION WITH HYPERPARAMETER TUNING
+        print("STEP 3: 2-FOLD STRATIFIED CROSS-VALIDATION")
+        print("-"*70)
         
+        skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=RANDOM_STATE)
+        fold_results = []
+        best_model = None
+        best_scaler = None
+        best_overall_score = -1
+        best_fold = -1
+        
+        fold_num = 0
+        for train_idx, test_idx in skf.split(all_features, all_labels_filtered):
+            fold_num += 1
+            print(f"\n{'='*70}")
+            print(f"FOLD {fold_num}/2")
+            print(f"{'='*70}")
+            
+            # Split data for this fold
+            X_fold_train = all_features[train_idx].astype(np.float32)
+            y_fold_train = all_labels_filtered[train_idx]
+            X_fold_test = all_features[test_idx].astype(np.float32)
+            y_fold_test = all_labels_filtered[test_idx]
+            
+            print(f"Train/Test split: {len(X_fold_train)} / {len(X_fold_test)} (stratified)")
+            
+            # Train model with hyperparameter tuning on this fold
+            print(f"\nTraining fold {fold_num} with hyperparameter optimization...")
+            fold_start = time.time()
+            
+            fold_model, fold_scaler = train_hog_svm(
+                X_fold_train, y_fold_train, 
+                X_fold_test, y_fold_test, 
+                use_grid_search=True
+            )
+            
+            fold_train_time = time.time() - fold_start
+            
+            # Evaluate on test set of this fold
+            print(f"\nEvaluating fold {fold_num}...")
+            fold_metrics = evaluate_model(fold_model, fold_scaler, X_fold_test, y_fold_test, 
+                                         f"Fold {fold_num} Test")
+            
+            # Track results
+            fold_result = {
+                'fold': fold_num,
+                'model': fold_model,
+                'scaler': fold_scaler,
+                'metrics': fold_metrics,
+                'train_time': fold_train_time,
+                'f1_score': fold_metrics['f1'],
+                'accuracy': fold_metrics['accuracy']
+            }
+            fold_results.append(fold_result)
+            
+            # Update best model if this fold is better
+            if fold_metrics['f1'] > best_overall_score:
+                best_overall_score = fold_metrics['f1']
+                best_model = fold_model
+                best_scaler = fold_scaler
+                best_fold = fold_num
+            
+            print(f"\nFold {fold_num} completed in {fold_train_time:.1f}s")
+            print(f"Fold {fold_num} F1-Score: {fold_metrics['f1']:.4f}")
+            gc.collect()
+        
+        # STEP 4: Report Cross-Validation Results
+        print(f"\n{'='*70}")
+        print("2-FOLD CROSS-VALIDATION SUMMARY")
+        print(f"{'='*70}")
+        
+        all_accuracies = [r['accuracy'] for r in fold_results]
+        all_f1_scores = [r['f1_score'] for r in fold_results]
+        
+        print(f"\nFold 1 Accuracy: {fold_results[0]['accuracy']:.4f}  |  F1-Score: {fold_results[0]['f1_score']:.4f}")
+        print(f"Fold 2 Accuracy: {fold_results[1]['accuracy']:.4f}  |  F1-Score: {fold_results[1]['f1_score']:.4f}")
+        print(f"\nMean Accuracy: {np.mean(all_accuracies):.4f} (+/- {np.std(all_accuracies):.4f})")
+        print(f"Mean F1-Score: {np.mean(all_f1_scores):.4f} (+/- {np.std(all_f1_scores):.4f})")
+        print(f"\n✓ BEST MODEL: From Fold {best_fold} with F1-Score {best_overall_score:.4f}")
+        
+        # STEP 5: Visualizations for best fold
+        print(f"\n{'='*70}")
+        print("STEP 4: Generating Visualizations (Best Fold)")
+        print(f"{'='*70}")
+        
+        best_metrics = fold_results[best_fold - 1]['metrics']
         step_start = time.time()
-        model, scaler = train_hog_svm(X_train_features, y_train_filtered, 
-                                       X_val_features, y_val_filtered, use_grid_search=True)
-        train_time = time.time() - step_start
-        print(f"✓ Model training completed in {train_time:.1f}s\n")
-        
-        # STEP 7: Evaluation on test set
-        print("STEP 7: Test Set Evaluation")
-        print("-"*60)
-        
-        test_metrics = evaluate_model(model, scaler, X_test_features, y_test_filtered, "Test")
-        
-        # STEP 8: Visualizations (non-blocking)
-        print("\nSTEP 8: Generating Visualizations")
-        print("-"*60)
-        
-        step_start = time.time()
-        plot_confusion_matrix(test_metrics['confusion_matrix'], "Test")
-        plot_roc_curve(test_metrics['y_true'], test_metrics['y_pred_proba'], "Test")
+        plot_confusion_matrix(best_metrics['confusion_matrix'], f"Fold{best_fold}")
+        plot_roc_curve(best_metrics['y_true'], best_metrics['y_pred_proba'], f"Fold{best_fold}")
         viz_time = time.time() - step_start
         print(f"✓ Visualizations completed in {viz_time:.1f}s\n")
         
-        # STEP 9: Save model
-        print("STEP 9: Saving Model")
-        print("-"*60)
+        # STEP 6: Save best model
+        print("STEP 5: Saving Best Model")
+        print("-"*70)
+        save_model(best_model, best_scaler)
         
-        save_model(model, scaler)
-        
-        # Summary
+        # Final Summary
         total_time = time.time() - start_time
-        print("\n" + "="*60)
-        print("✓✓✓ TRAINING COMPLETED SUCCESSFULLY ✓✓✓")
-        print("="*60)
-        print(f"\nTest Accuracy:  {test_metrics['accuracy']:.4f}")
-        print(f"Test Precision: {test_metrics['precision']:.4f}")
-        print(f"Test Recall:    {test_metrics['recall']:.4f}")
-        print(f"Test F1-Score:  {test_metrics['f1']:.4f}")
-        print(f"Test ROC-AUC:   {test_metrics['roc_auc']:.4f}")
+        print("\n" + "="*70)
+        print("✓✓✓ TRAINING WITH 2-FOLD CV COMPLETED SUCCESSFULLY ✓✓✓")
+        print("="*70)
+        print(f"\nBEST MODEL PERFORMANCE (from Fold {best_fold}):")
+        print(f"  Accuracy:  {best_metrics['accuracy']:.4f}")
+        print(f"  Precision: {best_metrics['precision']:.4f}")
+        print(f"  Recall:    {best_metrics['recall']:.4f}")
+        print(f"  F1-Score:  {best_metrics['f1']:.4f}")
+        print(f"  ROC-AUC:   {best_metrics['roc_auc']:.4f}")
+        
+        print(f"\nCROS-VALIDATION STATISTICS:")
+        print(f"  Mean Accuracy: {np.mean(all_accuracies):.4f} ± {np.std(all_accuracies):.4f}")
+        print(f"  Mean F1-Score: {np.mean(all_f1_scores):.4f} ± {np.std(all_f1_scores):.4f}")
         
         print(f"\nTiming Breakdown:")
-        print(f"  Training features:    {train_extract_time:.1f}s")
-        print(f"  Validation features:  {val_extract_time:.1f}s")
-        print(f"  Test features:        {test_extract_time:.1f}s")
-        print(f"  Model training:       {train_time:.1f}s")
-        print(f"  Visualizations:       {viz_time:.1f}s")
-        print(f"  Total time:           {total_time:.1f}s ({total_time/60:.1f} minutes)")
-        print("="*60 + "\n")
+        print(f"  Feature extraction: {feature_extract_time:.1f}s")
+        print(f"  Fold 1 training:    {fold_results[0]['train_time']:.1f}s")
+        print(f"  Fold 2 training:    {fold_results[1]['train_time']:.1f}s")
+        print(f"  Visualizations:     {viz_time:.1f}s")
+        print(f"  Total time:         {total_time:.1f}s ({total_time/60:.1f} minutes)")
+        print("="*70 + "\n")
         
     except KeyboardInterrupt:
         print("\n\n⚠ Training interrupted by user")
