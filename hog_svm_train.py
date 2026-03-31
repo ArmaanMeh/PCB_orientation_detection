@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     confusion_matrix, roc_auc_score, roc_curve, classification_report,
@@ -473,32 +473,17 @@ def train_hog_svm(X_train, y_train, X_val=None, y_val=None, use_grid_search=True
     
     # Hyperparameter tuning with Grid Search
     if use_grid_search:
-        print("\nPerforming GridSearchCV for hyperparameter optimization...")
+        print("\nTraining SVM with BEST PARAMETERS (from tuning results)...")
+        print("  Best Parameters: C=0.1, kernel='linear', gamma='scale'")
         
-        # Stable parameters
-        param_grid = {
-            'C': [1, 10, 100],
-            'kernel': ['rbf', 'linear'],
-            'gamma': ['scale', 'auto']
-        }
-        
-        svm = SVC(probability=True, random_state=RANDOM_STATE, cache_size=500, max_iter=2000)
-        grid_search = GridSearchCV(svm, param_grid, cv=3, scoring='f1', n_jobs=-1, verbose=1)
-        
+        # Use BEST parameters identified from hyperparameter tuning
+        model = SVC(kernel='linear', C=0.1, gamma='scale', probability=True, 
+                   random_state=RANDOM_STATE, cache_size=500, max_iter=2000)
         try:
-            grid_search.fit(X_train_scaled, y_train)
-        except Exception as e:
-            print(f"GridSearchCV error: {type(e).__name__}: {e}")
-            print("Falling back to default SVM parameters...")
-            model = SVC(kernel='rbf', C=100, gamma='scale', probability=True, 
-                       random_state=RANDOM_STATE, cache_size=500, max_iter=2000)
             model.fit(X_train_scaled, y_train)
-            return model, scaler
-        
-        print(f"\n✓ Best parameters: {grid_search.best_params_}")
-        print(f"✓ Best CV F1-score: {grid_search.best_score_:.4f}")
-        
-        model = grid_search.best_estimator_
+        except Exception as e:
+            print(f"SVM training error: {type(e).__name__}: {e}")
+            raise
     else:
         # Train with default parameters
         print("\nTraining SVM with default parameters...")
