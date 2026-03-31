@@ -323,15 +323,91 @@ def plot_training_history(history, fold_num=1):
     print(f"✓ Training history saved to {filepath}")
 
 
+def save_hyperparameter_results(all_results, best_config, best_fold, model_save_dir=MODEL_SAVE_DIR):
+    """Save hyperparameter tuning results to a markdown file."""
+    try:
+        results_file = os.path.join(model_save_dir, "CNN_HYPERPARAMETER_TUNING_RESULTS.md")
+        
+        with open(results_file, 'w') as f:
+            f.write("# CNN Hyperparameter Tuning Results\n\n")
+            f.write("## Best Configuration\n\n")
+            f.write(f"- **Filters Base**: {best_config['filters_base']}\n")
+            f.write(f"- **Dropout**: {best_config['dropout']}\n")
+            f.write(f"- **Learning Rate**: {best_config['learning_rate']}\n")
+            f.write(f"- **Batch Size**: {best_config['batch_size']}\n")
+            f.write(f"- **Best Fold**: {best_fold}\n\n")
+            
+            f.write("## All Configuration Results\n\n")
+            
+            # Group results by fold
+            for fold_num in [1, 2]:
+                fold_results = [r for r in all_results if r['fold'] == fold_num]
+                
+                if fold_results:
+                    f.write(f"### Fold {fold_num}\n\n")
+                    f.write("| Config | Accuracy | Precision | Recall | F1-Score |\n")
+                    f.write("|--------|----------|-----------|--------|----------|\n")
+                    
+                    for result in sorted(fold_results, key=lambda x: x['config_idx']):
+                        config_idx = result['config_idx']
+                        accuracy = result['accuracy']
+                        precision = result['precision']
+                        recall = result['recall']
+                        f1 = result['f1_score']
+                        f.write(f"| {config_idx} | {accuracy:.4f} | {precision:.4f} | {recall:.4f} | {f1:.4f} |\n")
+                    f.write("\n")
+            
+            f.write("## Configurations Tested\n\n")
+            for config_idx, config in enumerate(HYPERPARAMETER_CONFIGS, 1):
+                f.write(f"**Config {config_idx}**:\n")
+                f.write(f"- Filters Base: {config['filters_base']}\n")
+                f.write(f"- Dropout: {config['dropout']}\n")
+                f.write(f"- Learning Rate: {config['learning_rate']}\n")
+                f.write(f"- Batch Size: {config['batch_size']}\n\n")
+        
+        print(f"✓ Hyperparameter results saved to {results_file}")
+        return True
+        
+    except Exception as e:
+        print(f"✗ ERROR saving results: {type(e).__name__}: {e}")
+        return False
+
+
 # ==========================================
 # MODEL PERSISTENCE
 # ==========================================
 def save_model(model, model_dir=MODEL_SAVE_DIR):
-    """Save trained model."""
-    os.makedirs(model_dir, exist_ok=True)
-    model_path = os.path.join(model_dir, MODEL_NAME)
-    model.save(model_path)
-    print(f"Model saved to {model_path}")
+    """Save trained model with error handling and verification."""
+    try:
+        os.makedirs(model_dir, exist_ok=True)
+        model_path = os.path.join(model_dir, MODEL_NAME)
+        
+        # Validate model is not None
+        if model is None:
+            raise ValueError("Model is None - cannot save")
+        
+        # Save model
+        print(f"Saving model to {model_path}...")
+        model.save(model_path)
+        
+        # Verify file was created
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file was not created at {model_path}")
+        
+        # Check file size
+        file_size = os.path.getsize(model_path)
+        if file_size == 0:
+            raise ValueError(f"Model file is empty (0 bytes) at {model_path}")
+        
+        print(f"✓ Model saved successfully: {model_path}")
+        print(f"  File size: {file_size / (1024*1024):.2f} MB")
+        return True
+        
+    except Exception as e:
+        print(f"✗ ERROR saving model: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 # ==========================================
@@ -455,7 +531,8 @@ def main():
                 'model': best_config_in_fold['model'],
                 'metrics': best_config_in_fold['metrics'],
                 'f1_score': best_config_in_fold['f1_score'],
-                'accuracy': best_config_in_fold['accuracy']
+                'accuracy': best_config_in_fold['accuracy'],
+                'all_config_results': fold_config_results  # Store all results for documentation
             }
             fold_results.append(fold_result)
             
@@ -493,6 +570,38 @@ def main():
         best_metrics = fold_results[best_fold - 1]['metrics']
         plot_confusion_matrix(best_metrics['confusion_matrix'], f"Fold{best_fold}")
         
+        # STEP 5: Collect ALL Hyperparameter Results for Documentation
+        print(f"\n{'='*70}")
+        print("STEP 4: Collecting All Hyperparameter Results")
+        print(f"{'='*70}")
+        
+        all_results = []
+        for fold_idx, fold_result in enumerate(fold_results, 1):
+            print(f"\nFold {fold_idx} Results:")
+            print(f"{'  Config':<10} {'Accuracy':<12} {'Precision':<12} {'Recall':<12} {'F1-Score':<12}")
+            print(f"{'  '+'-'*8:<10} {'-'*10:<12} {'-'*10:<12} {'-'*10:<12} {'-'*10:<12}")
+            
+            # Collect results for this fold (from all configs tested)
+            for config_result in fold_results[fold_idx-1].get('all_config_results', []):
+                config_idx = config_result.get('config_idx', 'N/A')
+                metrics = config_result.get('metrics', {})
+                accuracy = metrics.get('accuracy', 0)
+                precision = metrics.get('precision', 0)
+                recall = metrics.get('recall', 0)
+                f1 = metrics.get('f1', 0)
+                
+                all_results.append({
+                    'fold': fold_idx,
+                    'config_idx': config_idx,
+                    'config': config_result.get('config', {}),
+                    'accuracy': accuracy,
+                    'precision': precision,
+                    'recall': recall,
+                    'f1_score': f1
+                })
+                
+                print(f"  Config {config_idx:<3} {accuracy:<12.4f} {precision:<12.4f} {recall:<12.4f} {f1:<12.4f}")
+        
         # Summary
         total_time = time.time() - start_time
         print("\n" + "="*70)
@@ -518,10 +627,25 @@ def main():
         print(f"\nTiming: Total {total_time:.1f}s ({total_time/60:.1f} minutes)")
         print("="*70 + "\n")
         
-        # STEP 5: Save best model
-        print("STEP 4: Saving Best Model")
+        # STEP 6: Save best model with verification
+        print("STEP 5: Saving Best Model")
         print("-"*70)
-        save_model(best_model)
+        
+        if best_model is not None:
+            save_success = save_model(best_model)
+            if save_success:
+                print("✓ Model successfully saved to Export folder")
+            else:
+                print("✗ FAILED to save model - see errors above")
+                sys.exit(1)
+        else:
+            print("✗ ERROR: best_model is None - cannot save")
+            sys.exit(1)
+        
+        # STEP 7: Save hyperparameter results to markdown
+        print("\nSTEP 6: Saving Hyperparameter Results")
+        print("-"*70)
+        save_hyperparameter_results(all_results, best_config, best_fold)
         
     except KeyboardInterrupt:
         print("\n\n⚠ Training interrupted by user")
