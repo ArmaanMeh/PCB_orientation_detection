@@ -1,153 +1,104 @@
+#!/usr/bin/env python3
+"""
+Live CNN Classification - Minimal, Fast, Robust
+PCB Orientation Detection with real-time video feed
+"""
+
 import cv2
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.models import load_model
 import time
 
-# Configuration - Key Hyperparameters
+# Configuration
 MODEL_PATH = "Export/ot_model.keras"
 IMG_SIZE = 244
-CONFIDENCE_THRESHOLD = 0.5
-
-# HYPERPARAMETER TUNING - Recommended Settings Based on Cross-Validation
-# Learning Rate: 0.001 (lower values provide better convergence)
-# Num Filters: 32 (balanced between model complexity and performance)
-# Dense Units: 128 (sufficient hidden units for classification)
-# Dropout Rate: 0.2 (moderate regularization)
-
-# Class labels (adjust based on your data)
 CLASS_LABELS = ["Fail", "Pass"]
 
-HYPERPARAMETERS = {
-    'learning_rate': 0.001,
+# Hyperparameters (from tuned cross-validation)
+HYPERPARAMS = {
+    'learning_rate': 0.01,
     'num_filters': 32,
     'dense_units': 128,
-    'dropout_rate': 0.2,
-    'note': 'Tuned via 2-fold cross-validation'
+    'dropout_rate': 0.2
 }
 
 def main():
-    # Load the trained model
+    """Main classification loop."""
     print("="*60)
-    print("PCB ORIENTATION DETECTION - LIVE CLASSIFICATION")
+    print("PCB DETECTION - CNN Live Classification")
     print("="*60)
     
-    print("\nTuned Hyperparameters (from cross-validation):")
-    for key, value in HYPERPARAMETERS.items():
-        if key != 'note':
-            print(f"  {key}: {value}")
-    print(f"  Note: {HYPERPARAMETERS['note']}")
-    
-    print("\nLoading model...")
+    # Load model
     try:
-        model = load_model(MODEL_PATH)
-        print(f"Model loaded successfully from {MODEL_PATH}")
+        model = tf.keras.models.load_model(MODEL_PATH)
+        print(f"✓ Model loaded: {MODEL_PATH}\n")
     except Exception as e:
-        print(f"Error loading model: {e}")
+        print(f"✗ Error loading model: {e}")
         return
     
     # Initialize webcam
-    print("Initializing webcam...")
     cap = cv2.VideoCapture(1)
-    
     if not cap.isOpened():
-        print("Error: Could not open webcam")
+        cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("✗ Could not open webcam")
         return
     
-    # Set webcam resolution for better performance
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_FPS, 30)
     
-    print("Started live classification. Press 'q' to quit...")
-    
+    print("🎥 Live classification started (press 'q' to quit)\n")
     frame_count = 0
-    fps_start_time = time.time()
+    fps_time = time.time()
     
-    while True:
-        ret, frame = cap.read()
-        
-        if not ret:
-            print("Error: Could not read frame")
-            break
-        
-        # Prepare frame for model (resize and normalize)
-        input_frame = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
-        input_array = np.expand_dims(input_frame, axis=0)
-        
-        # Make prediction
-        logits = model.predict(input_array, verbose=0)
-        probabilities = tf.nn.softmax(logits[0]).numpy()
-        
-        # Get predicted class and confidence
-        predicted_class_idx = np.argmax(probabilities)
-        predicted_class = CLASS_LABELS[predicted_class_idx]
-        confidence = probabilities[predicted_class_idx]
-        
-        # Calculate FPS
-        frame_count += 1
-        elapsed_time = time.time() - fps_start_time
-        if elapsed_time > 1.0:
-            fps = frame_count / elapsed_time
-            frame_count = 0
-            fps_start_time = time.time()
-        else:
-            fps = frame_count / elapsed_time if elapsed_time > 0 else 0
-        
-        # Display results on frame
-        # Background for text
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (10, 10), (500, 150), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
-        
-        # Classification result color (green for pass, red for fail)
-        color = (0, 255, 0) if predicted_class_idx == 1 else (0, 0, 255)
-        
-        # Display prediction
-        cv2.putText(
-            frame,
-            f"Prediction: {predicted_class}",
-            (20, 50),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.2,
-            color,
-            2
-        )
-        
-        # Display confidence
-        cv2.putText(
-            frame,
-            f"Confidence: {confidence:.2%}",
-            (20, 90),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (255, 255, 255),
-            2
-        )
-        
-        # Display FPS
-        cv2.putText(
-            frame,
-            f"FPS: {fps:.1f}",
-            (20, 130),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 255, 0),
-            2
-        )
-        
-        # Show the frame
-        cv2.imshow("PCB Orientation Detection", frame)
-        
-        # Check for quit command
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            print("Exiting...")
-            break
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Predict
+            img_resized = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
+            img_array = np.expand_dims(img_resized, axis=0) / 255.0
+            logits = model.predict(img_array, verbose=0)
+            probs = tf.nn.softmax(logits[0]).numpy()
+            pred_idx = np.argmax(probs)
+            confidence = probs[pred_idx]
+            
+            # FPS calculation
+            frame_count += 1
+            elapsed = time.time() - fps_time
+            fps = frame_count / elapsed if elapsed > 1.0 else 0
+            if elapsed > 1.0:
+                frame_count = 0
+                fps_time = time.time()
+            
+            # Draw results
+            color = (0, 255, 0) if pred_idx == 1 else (0, 0, 255)
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (10, 10), (500, 120), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+            
+            cv2.putText(frame, f"Result: {CLASS_LABELS[pred_idx]}", (20, 50), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2)
+            cv2.putText(frame, f"Confidence: {confidence:.1%}", (20, 90),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.putText(frame, f"FPS: {fps:.1f}", (20, 120),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+            
+            cv2.imshow("PCB Detection", frame)
+            
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
     
-    # Release resources
-    cap.release()
-    cv2.destroyAllWindows()
-    print("Live classification ended.")
+    except Exception as e:
+        print(f"✗ Error during classification: {e}")
+    
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+        print("\n✓ Classification ended")
 
 if __name__ == "__main__":
     main()
