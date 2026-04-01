@@ -14,12 +14,13 @@ MODEL_PATH = "Export/ot_model.keras"
 IMG_SIZE = 244
 CLASS_LABELS = ["Fail", "Pass"]
 
-# Hyperparameters (from tuned cross-validation)
+# Best Hyperparameters (from 2-fold CV tuning - Config 5)
+# These MUST match the hyperparameters used in main_cnn.ipynb for model training
 HYPERPARAMS = {
-    'learning_rate': 0.01,
-    'num_filters': 32,
-    'dense_units': 128,
-    'dropout_rate': 0.2
+    'filters_base': 64,      # Filters in first Conv layer
+    'dropout_rate': 0.25,    # Dropout probability
+    'learning_rate': 0.0005, # Adam optimizer learning rate
+    'batch_size': 48         # Training batch size
 }
 
 def main():
