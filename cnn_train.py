@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import gc
+import json
 import numpy as np
 
 try:
@@ -153,6 +154,26 @@ def load_dataset(image_paths, labels):
 
 
 # ==========================================
+# EARLY STOPPING CALLBACK FOR 90% ACCURACY
+# ==========================================
+class AccuracyThresholdCallback(callbacks.Callback):
+    """Stop training when validation accuracy reaches threshold."""
+    def __init__(self, threshold=0.90, verbose=1):
+        super().__init__()
+        self.threshold = threshold
+        self.verbose = verbose
+    
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        val_accuracy = logs.get('val_accuracy')
+        if val_accuracy is not None and val_accuracy >= self.threshold:
+            if self.verbose > 0:
+                print(f"\n✓ Validation accuracy reached {val_accuracy:.4f} (target: {self.threshold:.4f})")
+                print("✓ Stopping training early!")
+            self.model.stop_training = True
+
+
+# ==========================================
 # MODEL BUILDING
 # ==========================================
 def build_cnn_model(input_shape=(IMG_SIZE, IMG_SIZE, 3), filters_base=32, dropout=0.25, learning_rate=0.0005):
@@ -217,13 +238,16 @@ def train_model(model, X_train, y_train, X_val, y_val, epochs=EPOCHS, batch_size
         verbose=1
     )
     
+    # Add accuracy threshold callback
+    accuracy_threshold = AccuracyThresholdCallback(threshold=0.90, verbose=1)
+    
     # Train
     history = model.fit(
         X_train, y_train,
         batch_size=batch_size,
         epochs=epochs,
         validation_data=(X_val, y_val),
-        callbacks=[early_stop, reduce_lr],
+        callbacks=[early_stop, reduce_lr, accuracy_threshold],
         verbose=1
     )
     
@@ -370,6 +394,40 @@ def save_hyperparameter_results(all_results, best_config, best_fold, model_save_
         
     except Exception as e:
         print(f"✗ ERROR saving results: {type(e).__name__}: {e}")
+        return False
+
+
+def save_best_hyperparameters(config, metrics, fold, model_save_dir=MODEL_SAVE_DIR):
+    """Save best hyperparameters and metrics to JSON file for reuse."""
+    try:
+        os.makedirs(model_save_dir, exist_ok=True)
+        params_file = os.path.join(model_save_dir, "best_hyperparameters.json")
+        
+        params_data = {
+            "hyperparameters": config,
+            "best_fold": fold,
+            "metrics": {
+                "accuracy": float(metrics["accuracy"]),
+                "precision": float(metrics["precision"]),
+                "recall": float(metrics["recall"]),
+                "f1": float(metrics["f1"]),
+                "roc_auc": float(metrics["roc_auc"])
+            },
+            "model_settings": {
+                "img_size": IMG_SIZE,
+                "batch_size": config["batch_size"],
+                "epochs": EPOCHS
+            }
+        }
+        
+        with open(params_file, 'w') as f:
+            json.dump(params_data, f, indent=2)
+        
+        print(f"✓ Best hyperparameters saved to {params_file}")
+        return True
+        
+    except Exception as e:
+        print(f"✗ ERROR saving hyperparameters: {type(e).__name__}: {e}")
         return False
 
 
@@ -646,6 +704,11 @@ def main():
         print("\nSTEP 6: Saving Hyperparameter Results")
         print("-"*70)
         save_hyperparameter_results(all_results, best_config, best_fold)
+        
+        # STEP 8: Save best hyperparameters to JSON for reuse
+        print("\nSTEP 7: Saving Best Hyperparameters for Final Training")
+        print("-"*70)
+        save_best_hyperparameters(best_config, best_metrics, best_fold)
         
     except KeyboardInterrupt:
         print("\n\n⚠ Training interrupted by user")

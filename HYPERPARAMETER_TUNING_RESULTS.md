@@ -140,6 +140,33 @@ This document contains the hyperparameter tuning results for both HOG-SVM and CN
 ## Notes
 
 - HOG-SVM model achieves **99.48% accuracy** with remarkable performance
-- CNN training results pending - once completed, this document will be updated automatically
+- CNN training uses early stopping at 90% accuracy threshold for efficiency
 - Both models use 2-fold stratified cross-validation for robust evaluation
-- The best hyperparameters from each model will be used for production inference
+- Best hyperparameters are automatically saved to `Export/best_hyperparameters.json`
+- Final model is trained in `main_cnn.ipynb` using the tuned hyperparameters
+- The best model is exported as `Export/ot_model.keras` for production use
+
+---
+
+## Final Training Results
+
+### Best CNN Model (After Hyperparameter Tuning)
+
+**Training Status**: Execute `python cnn_train.py` then run `main_cnn.ipynb` cells
+
+**Best Hyperparameters to be used**:
+- Filters Base: [From `Export/best_hyperparameters.json`]
+- Dropout: [From `Export/best_hyperparameters.json`]
+- Learning Rate: [From `Export/best_hyperparameters.json`]
+- Batch Size: [From `Export/best_hyperparameters.json`]
+
+**Model Export**: 
+- Location: `Export/ot_model.keras` (Keras format)
+- Alternative: `Export/ot_model_saved/` (SavedModel format)
+- Size: [Automatically saved after final training]
+
+**Early Stopping**: Model stops training when:
+- Validation accuracy reaches 90%, OR
+- Validation loss doesn't improve for 5 epochs (EarlyStopping)
+
+This ensures efficient training while maintaining good accuracy!
