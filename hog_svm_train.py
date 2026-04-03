@@ -35,7 +35,7 @@ MODEL_SAVE_DIR = "Export"
 MODEL_NAME = "hog_svm_model.pkl"
 SCALER_NAME = "hog_svm_scaler.pkl"
 
-IMG_SIZE = 240  # Changed from 244 to satisfy HOG constraint: (240-32) % 16 == 0
+IMG_SIZE = 244
 HOG_ORIENTATIONS = 9
 HOG_PIXELS_PER_CELL = (16, 16)
 HOG_CELLS_PER_BLOCK = (2, 2)

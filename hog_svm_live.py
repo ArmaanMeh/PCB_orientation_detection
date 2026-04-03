@@ -13,7 +13,7 @@ import time
 # Configuration
 MODEL_PATH = "Export/hog_svm_model.pkl"
 SCALER_PATH = "Export/hog_svm_scaler.pkl"
-IMG_SIZE = 240
+IMG_SIZE = 244
 CLASS_LABELS = {0: "Fail", 1: "Pass"}
 
 HOG_ORIENTATIONS = 9
