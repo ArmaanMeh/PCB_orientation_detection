@@ -39,6 +39,7 @@ IMG_SIZE = 244
 HOG_ORIENTATIONS = 9
 HOG_PIXELS_PER_CELL = (16, 16)
 HOG_CELLS_PER_BLOCK = (2, 2)
+HOG_WINDOW_STRIDE = (4, 4)
 
 RANDOM_STATE = 42
 TEST_SPLIT = 0.2
@@ -77,7 +78,7 @@ def create_hog_descriptor():
         hog = cv2.HOGDescriptor(
             (IMG_SIZE, IMG_SIZE),      # winSize
             (32, 32),                  # blockSize (2 cells of 16x16)
-            (16, 16),                  # blockStride (stride by 1 cell)
+            (4, 4),                    # blockStride - adjusted for 244x244 compatibility
             (16, 16),                  # cellSize
             HOG_ORIENTATIONS           # nbins (9)
         )
@@ -155,7 +156,7 @@ def extract_hog_features(image, visualize=False):
         # Extract HOG features - CRITICAL: winStride must match blockStride
         features = HOG_DESCRIPTOR.compute(
             image, 
-            winStride=(16, 16),    # Must match blockStride
+            winStride=(4, 4),    # Must match blockStride (adjusted for 244x244)
             padding=(0, 0),
             locations=None
         )
