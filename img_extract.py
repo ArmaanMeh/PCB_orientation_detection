@@ -5,7 +5,7 @@ import shutil
 # =====================================
 # CONFIG
 # =====================================
-video_path = "Data/Raw_data/Lobbyfail17.mp4"
+video_path = "Data/Raw_data/Outdoorfail3.mp4"
 output_dir = "Data/Processed_data/Fail_data"
 interval_ms = 200
 
