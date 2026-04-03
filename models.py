@@ -33,7 +33,7 @@ HOG_CONFIG = {
     'orientations': 9,
     'pixels_per_cell': (16, 16),
     'cells_per_block': (2, 2),
-    'img_size': 240
+    'img_size': 244
 }
 
 @contextmanager
@@ -61,7 +61,7 @@ def extract_hog_features(image):
         hog = cv2.HOGDescriptor(
             (HOG_CONFIG['img_size'], HOG_CONFIG['img_size']),
             (32, 32),
-            (16, 16),
+            (4, 4),  # Updated stride for 244x244 compatibility
             HOG_CONFIG['pixels_per_cell'],
             HOG_CONFIG['orientations']
         )
