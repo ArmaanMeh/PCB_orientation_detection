@@ -91,8 +91,10 @@ def main():
                 # Model's last layer is Dense(num_classes) with NO activation, so output is logits
                 # Check if we need to apply softmax (last layer is not softmax)
                 final_layer = model.layers[-1]
-                has_softmax = (hasattr(final_layer, 'activation') and 
-                               final_layer.activation.__name__ == 'softmax')
+                # Safely check activation name - guard against lambdas/partial functions
+                activation = getattr(final_layer, 'activation', None)
+                activation_name = getattr(activation, '__name__', None) if activation else None
+                has_softmax = activation_name == 'softmax'
                 
                 if has_softmax:
                     # Output is already softmax probabilities
