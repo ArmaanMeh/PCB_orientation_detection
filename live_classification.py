@@ -32,40 +32,72 @@ def main():
     # Load model
     try:
         model = tf.keras.models.load_model(MODEL_PATH)
-        print(f"✓ Model loaded: {MODEL_PATH}\n")
+        print(f"✓ Model loaded: {MODEL_PATH}")
+        
+        # Verify model output shape
+        if model.output_shape[-1] != len(CLASS_LABELS):
+            print(f"✗ ERROR: Model outputs {model.output_shape[-1]} classes but expecting {len(CLASS_LABELS)}")
+            return
+        print(f"✓ Model output shape verified: {model.output_shape}\n")
     except Exception as e:
         print(f"✗ Error loading model: {e}")
+        import traceback
+        traceback.print_exc()
         return
     
     # Initialize webcam
+    print("Initializing webcam...")
     cap = cv2.VideoCapture(1)
     if not cap.isOpened():
+        print("Camera 1 not available, trying camera 0...")
         cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("✗ Could not open webcam")
+        print("✗ Could not open webcam on any camera index")
         return
     
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_FPS, 30)
     
-    print("🎥 Live classification started (press 'q' to quit)\n")
+    print("✓ Webcam initialized")
+    print("🎥 Live classification started")
+    print("Controls: 'q' to quit | 's' to save frame\n")
+    
     frame_count = 0
     fps_time = time.time()
+    frames_saved = 0
     
     try:
         while True:
             ret, frame = cap.read()
             if not ret:
+                print("✗ Failed to read frame from webcam")
                 break
             
-            # Predict
-            img_resized = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
-            img_array = np.expand_dims(img_resized, axis=0)  # Rescaling layer in model handles normalization
-            logits = model.predict(img_array, verbose=0)
-            probs = tf.nn.softmax(logits[0]).numpy()  # Convert logits to probabilities
-            pred_idx = np.argmax(probs)
-            confidence = probs[pred_idx]
+            try:
+                # Predict
+                img_resized = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
+                img_array = np.expand_dims(img_resized, axis=0)
+                
+                # Model returns logits (raw predictions)
+                logits = model.predict(img_array, verbose=0)
+                
+                # Convert logits to probabilities using softmax
+                probs = tf.nn.softmax(logits[0]).numpy()
+                pred_idx = np.argmax(probs)
+                confidence = float(probs[pred_idx])
+                
+                # Validate predictions
+                if not (0 <= pred_idx < len(CLASS_LABELS)):
+                    print(f"✗ Invalid prediction index: {pred_idx}")
+                    continue
+                if not (0 <= confidence <= 1.0):
+                    print(f"✗ Invalid confidence value: {confidence}")
+                    continue
+                
+            except Exception as e:
+                print(f"✗ Error during prediction: {e}")
+                continue
             
             # FPS calculation
             frame_count += 1
@@ -79,7 +111,7 @@ def main():
                 fps_time = time.time()
             
             # Draw results
-            color = (0, 255, 0) if pred_idx == 1 else (0, 0, 255)
+            color = (0, 255, 0) if pred_idx == 1 else (0, 0, 255)  # Green for Pass, Red for Fail
             overlay = frame.copy()
             cv2.rectangle(overlay, (10, 10), (500, 120), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
@@ -91,18 +123,32 @@ def main():
             cv2.putText(frame, f"FPS: {fps:.1f}", (20, 120),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
             
-            cv2.imshow("PCB Detection", frame)
+            cv2.imshow("PCB Detection - CNN Classification", frame)
             
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            # Handle keyboard input
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                print("\nQuitting application...")
                 break
+            elif key == ord('s'):
+                # Save frame
+                frames_saved += 1
+                filename = f"pcb_detection_{frames_saved}_{int(time.time())}.jpg"
+                filepath = f"Export/{filename}"
+                cv2.imwrite(filepath, frame)
+                print(f"Frame saved: {filename}")
     
+    except KeyboardInterrupt:
+        print("\n✗ Interrupted by user")
     except Exception as e:
         print(f"✗ Error during classification: {e}")
+        import traceback
+        traceback.print_exc()
     
     finally:
         cap.release()
         cv2.destroyAllWindows()
-        print("\n✓ Classification ended")
+        print(f"\n✓ Classification ended (Saved {frames_saved} frames)")
 
 if __name__ == "__main__":
     main()
