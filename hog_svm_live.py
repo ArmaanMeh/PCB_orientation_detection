@@ -334,7 +334,8 @@ def main():
             print("FPS counter reset")
     
     # Cleanup
-    cap.release()
+    if cap:
+        cap.release()
     cv2.destroyAllWindows()
     
     print("\n" + "="*60)
@@ -360,8 +361,6 @@ def predict_images_in_folder(folder_path, model, scaler):
     if not os.path.exists(folder_path):
         print(f"ERROR: Folder not found: {folder_path}")
         return
-    
-    models_loaded, scaler_loaded = load_model_and_scaler()
     
     results = []
     total_images = 0
