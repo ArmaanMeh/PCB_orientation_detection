@@ -61,16 +61,19 @@ def main():
             
             # Predict
             img_resized = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
-            img_array = np.expand_dims(img_resized, axis=0) / 255.0
+            img_array = np.expand_dims(img_resized, axis=0)  # Rescaling layer in model handles normalization
             logits = model.predict(img_array, verbose=0)
-            probs = tf.nn.softmax(logits[0]).numpy()
+            probs = tf.nn.softmax(logits[0]).numpy()  # Convert logits to probabilities
             pred_idx = np.argmax(probs)
             confidence = probs[pred_idx]
             
             # FPS calculation
             frame_count += 1
             elapsed = time.time() - fps_time
-            fps = frame_count / elapsed if elapsed > 1.0 else 0
+            if elapsed > 0:
+                fps = frame_count / elapsed
+            else:
+                fps = 0
             if elapsed > 1.0:
                 frame_count = 0
                 fps_time = time.time()
