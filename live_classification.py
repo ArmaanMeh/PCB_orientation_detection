@@ -10,11 +10,41 @@ import tensorflow as tf
 import time
 import os
 import traceback
+import json
+import pathlib
 
 # Configuration
 MODEL_PATH = "Export/ot_model.keras"
 IMG_SIZE = 244
-CLASS_LABELS = ["Fail", "Pass"]
+
+# Load class names dynamically to ensure they match training data
+def load_class_labels():
+    """Load class labels from training data or saved configuration."""
+    # Try to load from saved class_names.json
+    if os.path.exists("Export/class_names.json"):
+        try:
+            with open("Export/class_names.json", "r") as f:
+                data = json.load(f)
+                return data["class_names"]
+        except Exception as e:
+            print(f"Warning: Could not load class names from file: {e}")
+    
+    # Fallback: Try to determine from data directory
+    data_dir = pathlib.Path('Data/Processed_data')
+    if data_dir.exists():
+        try:
+            classes = sorted([d.name for d in data_dir.glob('*') if d.is_dir()])
+            if classes:
+                print(f"✓ Loaded class names from directory: {classes}")
+                return classes
+        except Exception as e:
+            print(f"Warning: Could not load from directory: {e}")
+    
+    # Fallback: Hardcoded values
+    print("Warning: Using fallback class labels")
+    return ["Fail_data", "Pass_data"]
+
+CLASS_LABELS = load_class_labels()
 
 def main():
     """Main classification loop."""
@@ -69,6 +99,7 @@ def main():
             try:
                 # Prepare image for model inference
                 # Model has Rescaling(1./255) as first layer, so it expects uint8 input [0,255]
+                print("Running prediction...")
                 img_resized = cv2.resize(frame, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_LINEAR)
                 # Ensure dtype is uint8 (cv2.resize preserves it, but be explicit)
                 if img_resized.dtype != np.uint8:
@@ -82,8 +113,16 @@ def main():
                 # Convert raw logits to probabilities
                 probs = tf.nn.softmax(output[0]).numpy()
                 
-                pred_idx = np.argmax(probs)
-                confidence = float(probs[pred_idx])
+                # CRITICAL FIX: Apply class weight adjustment for imbalanced dataset
+                # New dataset has 11:1 ratio (Fail:Pass), so model is biased towards Fail
+                # Apply inverse class weights to balance predictions
+                class_weights_correction = np.array([1.0/11.02, 1.0])  # Weights inverse to dataset imbalance
+                class_weights_correction = class_weights_correction / class_weights_correction.sum()
+                weighted_probs = probs * class_weights_correction
+                weighted_probs = weighted_probs / weighted_probs.sum()
+                
+                pred_idx = np.argmax(weighted_probs)
+                confidence = float(weighted_probs[pred_idx])
                 
                 # Validate predictions
                 if not (0 <= pred_idx < len(CLASS_LABELS)):
@@ -95,22 +134,28 @@ def main():
                 
             except Exception as e:
                 print(f"✗ Error during prediction: {e}")
-                continue
+                traceback.print_exc()
+                break
             
             # FPS calculation
             elapsed = time.time() - fps_time
+            frame_count += 1
             if elapsed > 0:
-                fps = (frame_count + 1) / elapsed
+                fps = frame_count / elapsed
             else:
                 fps = 0
             if elapsed > 1.0:
                 frame_count = 0
                 fps_time = time.time()
-            else:
-                frame_count += 1
+        
             
             # Draw results
-            color = (0, 255, 0) if pred_idx == 1 else (0, 0, 255)  # Green for Pass, Red for Fail
+            # Determine color based on whether prediction contains "Pass" or "Fail"
+            pred_class_name = CLASS_LABELS[pred_idx].lower()
+            if "pass" in pred_class_name:
+                color = (0, 255, 0)  # Green for Pass
+            else:
+                color = (0, 0, 255)  # Red for Fail
             overlay = frame.copy()
             cv2.rectangle(overlay, (10, 10), (500, 120), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
@@ -136,7 +181,7 @@ def main():
                     
                     # Ensure Export directory exists
                     os.makedirs("Export", exist_ok=True)
-                    filepath = f"Export/{filename}"
+                    filepath = os.path.join("Export", filename)
                     
                     # Save and check for success
                     success = cv2.imwrite(filepath, frame)
