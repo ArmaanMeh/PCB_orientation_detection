@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import tensorflow as tf
 import time
+import os
 
 # Configuration
 MODEL_PATH = "Export/ot_model.keras"
@@ -75,15 +76,31 @@ def main():
                 break
             
             try:
-                # Predict
-                img_resized = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
+                # Prepare image for model inference
+                # Model has Rescaling(1./255) as first layer, so it expects uint8 input [0,255]
+                img_resized = cv2.resize(frame, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_LINEAR)
+                # Ensure dtype is uint8 (cv2.resize preserves it, but be explicit)
+                if img_resized.dtype != np.uint8:
+                    img_resized = img_resized.astype(np.uint8)
                 img_array = np.expand_dims(img_resized, axis=0)
                 
-                # Model returns logits (raw predictions)
-                logits = model.predict(img_array, verbose=0)
+                # Get model prediction
+                output = model.predict(img_array, verbose=0)
                 
-                # Convert logits to probabilities using softmax
-                probs = tf.nn.softmax(logits[0]).numpy()
+                # Detect if model output is raw logits or already activated
+                # Model's last layer is Dense(num_classes) with NO activation, so output is logits
+                # Check if we need to apply softmax (last layer is not softmax)
+                final_layer = model.layers[-1]
+                has_softmax = (hasattr(final_layer, 'activation') and 
+                               final_layer.activation.__name__ == 'softmax')
+                
+                if has_softmax:
+                    # Output is already softmax probabilities
+                    probs = output[0]
+                else:
+                    # Output is raw logits, convert to probabilities using softmax
+                    probs = tf.nn.softmax(output[0]).numpy()
+                
                 pred_idx = np.argmax(probs)
                 confidence = float(probs[pred_idx])
                 
@@ -132,11 +149,24 @@ def main():
                 break
             elif key == ord('s'):
                 # Save frame
-                frames_saved += 1
-                filename = f"pcb_detection_{frames_saved}_{int(time.time())}.jpg"
-                filepath = f"Export/{filename}"
-                cv2.imwrite(filepath, frame)
-                print(f"Frame saved: {filename}")
+                try:
+                    frames_saved += 1
+                    filename = f"pcb_detection_{frames_saved}_{int(time.time())}.jpg"
+                    
+                    # Ensure Export directory exists
+                    os.makedirs("Export", exist_ok=True)
+                    filepath = f"Export/{filename}"
+                    
+                    # Save and check for success
+                    success = cv2.imwrite(filepath, frame)
+                    if success:
+                        print(f"✓ Frame saved: {filename}")
+                    else:
+                        print(f"✗ Failed to save frame: {filename} (cv2.imwrite returned False)")
+                        frames_saved -= 1  # Decrement counter if save failed
+                except Exception as e:
+                    print(f"✗ Error saving frame: {e}")
+                    frames_saved -= 1
     
     except KeyboardInterrupt:
         print("\n✗ Interrupted by user")
