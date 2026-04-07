@@ -259,7 +259,11 @@ def main():
     cap = cv2.VideoCapture(1)
     
     if not cap.isOpened():
-        print("ERROR: Could not open webcam")
+        print("Camera 1 not available, trying Camera 0...")
+        cap = cv2.VideoCapture(0)
+    
+    if not cap.isOpened():
+        print("ERROR: Could not open webcam on any camera index")
         return
     
     # Set webcam properties
