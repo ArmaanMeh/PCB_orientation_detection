@@ -102,6 +102,9 @@ This technical portfolio demonstrates a rigorous, engineering-focused approach t
 - **Ground Truth Labeling:** Manual verification by quality control engineers
 - **Verification:** Double-checked by experienced technicians to ensure accuracy
 
+**Dataset Access:**
+- **Google Drive Link:** [https://drive.google.com/drive/folders/1WexgAeTNjNZEXf9qx7vu1oyo93AjEW2M?usp=drive_link](https://drive.google.com/drive/folders/1WexgAeTNjNZEXf9qx7vu1oyo93AjEW2M?usp=drive_link)
+
 **Data Organization:**
 ```
 Data/
