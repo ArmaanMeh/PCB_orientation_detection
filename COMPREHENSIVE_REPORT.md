@@ -18,7 +18,7 @@ This technical portfolio demonstrates a rigorous, engineering-focused approach t
 
 ---
 
-## Section 1: Engineering Problem Definition (10%)
+## Section 1: Engineering Problem Definition
 
 ### 1.1 Engineering System Overview
 
@@ -90,7 +90,7 @@ This technical portfolio demonstrates a rigorous, engineering-focused approach t
 
 ---
 
-## Section 2: Dataset Collection & Feature Representation (15%)
+## Section 2: Dataset Collection & Feature Representation
 
 ### 2.1 Data Collection Methodology
 
@@ -202,8 +202,8 @@ Data/
 
 **CNN Metrics:**
 - Total Parameters: ~850K
-- Model Size: 3.2 MB
-- Training Time: 5-15 minutes
+- Model Size: 200 MB
+- Training Time: 30 minutes
 
 **Generalization Results:**
 ```
@@ -216,7 +216,7 @@ Gap:                 -6.05% (negative = excellent generalization)
 
 ---
 
-## Section 3: Neural Network Design & Optimisation (30%)
+## Section 3: Neural Network Design & Optimisation
 
 ### 3.1 CNN Architecture
 
@@ -340,7 +340,7 @@ Consistency: Good but lower overall performance
 | **Inference Speed** | ~50ms/image | ~10ms/image |
 | **Memory** | ~3.2 MB | ~50 KB |
 | **Adaptability** | High (retrainable) | Medium |
-| **Robustness** | Good | Excellent on this task |
+| **Robustness** | Excellent on this task | Good |
 
 ### 4.4 Model Selection Recommendation
 
@@ -373,7 +373,7 @@ CNN's 93.02% validation accuracy significantly exceeds SVM's 85.48%, providing b
 
 ---
 
-## Section 5: Experimental Rigor (20%)
+## Section 5: Experimental Rigor
 
 ### 5.1 Train-Validation-Test Split Strategy
 
@@ -623,7 +623,7 @@ Interpretation: Slight difference indicates stable but insufficient learning
 ### Mid-Term Enhancements (Months 1-3)
 
 1. **Data Expansion:**
-   - Increase dataset to 500+ images for even better generalization
+   - Increase dataset to 20000+ images for even better generalization
    - Capture more manufacturing variations and lighting conditions
    - Add edge cases and challenging scenarios to training data
 
@@ -668,16 +668,12 @@ Interpretation: Slight difference indicates stable but insufficient learning
 - **Processed Dataset:** `Data/Processed_data/` (available in repository)
 
 ### Model Files
-- **CNN Model:** `Export/ot_model.keras` (3.2 MB)
-- **SVM Model:** `Export/hog_svm_model.pkl` (50 KB)
+- **CNN Model:** `Export/ot_model.keras` 
+- **SVM Model:** `Export/hog_svm_model.pkl` 
 - **Configuration:** `Export/class_names.json`
 
 ### Code Repositories
 - **CNN Training:** [main_cnn.ipynb](main_cnn.ipynb)
 - **SVM Training:** [hog_svm_train.py](hog_svm_train.py)
 - **Live Classification:** [live_classification.py](live_classification.py) / [hog_svm_live.py](hog_svm_live.py)
-
----
-**Total Word Count:** ~3,950 words  
----
 
