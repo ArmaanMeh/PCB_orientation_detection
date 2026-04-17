@@ -3,7 +3,7 @@
 
 **Module:** Machine Learning for Engineers  
 **Assessment:** ML-Based Visual Quality Inspection System  
-**Student Name:** [To be filled]  
+**Student Name:** 
 **Date:** April 2026  
 ---
 

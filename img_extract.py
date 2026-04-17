@@ -5,9 +5,9 @@ import shutil
 # =====================================
 # CONFIG
 # =====================================
-video_path = "Data/Raw_data/Outdoorpass.mp4"
+video_path = "Data/Raw_data/Lobbypass01.mp4"
 output_dir = "Data/Processed_data/Pass_data"
-interval_ms = 150
+interval_ms = 200
 
 # Target output resolution
 target_width = 1280
