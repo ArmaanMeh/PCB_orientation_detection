@@ -4,6 +4,9 @@ Includes: feature extraction, hyperparameter optimization, validation,
 evaluation metrics, and robust training pipeline
 CRASH-PROOF: Memory-efficient processing with robust error handling
 """
+# Logic: This section imports necessary libraries and sets up global constants. It defines where data is located, where to save the model,
+# and the specific hyperparameters for the Histogram of Oriented Gradients (HOG) algorithm.
+# Memory management (like BATCH_SIZE) is also configured here to ensure the script doesn't crash when processing thousands of images.
 
 import cv2
 import numpy as np
@@ -63,6 +66,11 @@ BATCH_SIZE = 32  # Process images in batches to avoid memory overflow
 HOG_EXPECTED_FEATURE_SIZE = None  # Will be set during first extraction
 
 
+# Logic: The create_hog_descriptor function configures how the OpenCV HOG algorithm will interpret the image. 
+# It defines the sliding window size, the block size (how many pixels are grouped together to normalize contrast),
+# and the number of bins (orientations) to categorize the edge gradients into. 
+# If OpenCV rejects the custom parameters, it gracefully falls back to default settings.
+
 def create_hog_descriptor():
     """
     Create a properly configured HOG descriptor with stable parameters.
@@ -102,6 +110,14 @@ HOG_DESCRIPTOR = create_hog_descriptor()
 # ==========================================
 # HOG FEATURE EXTRACTION (ROBUST & STABLE)
 # ==========================================
+
+# Logic: This is the core image processing function. 
+# Machine learning models like SVMs cannot understand raw 2D image arrays directly; they need a 1D vector of numbers.
+# This function takes an image, validates it, converts it to grayscale, resizes it,
+# and calculates the HOG features (which represent the shape and edges of the PCB).
+# It includes heavy validation to catch corrupted images, None types, or incorrect data types, 
+# ensuring the pipeline doesn't crash mid-training.
+
 def extract_hog_features(image, visualize=False):
     """
     Extract HOG features from an image with robust error handling.
@@ -213,6 +229,13 @@ def extract_hog_features(image, visualize=False):
 # ==========================================
 # DATA LOADING & PREPROCESSING (MEMORY-EFFICIENT)
 # ==========================================
+"""
+Logic: Instead of loading all images into RAM at once (which causes "Out of Memory" errors), the script first maps out all the file paths.
+Then, it iterates through them using a batching system.
+It loads an image, extracts its 1D HOG features, stores the feature array,
+and immediately deletes the original image from memory using garbage collection (gc.collect()).
+"""
+
 def get_image_paths(data_dir=DATA_DIR):
     """
     Get all image paths without loading images into memory.
@@ -390,9 +413,18 @@ def load_and_extract_features(image_paths, labels, verbose=True):
     return features_array, labels_array
 
 
+
 # ==========================================
 # MODEL TRAINING
 # ==========================================
+
+"""
+Logic: This function prepares the data for the Support Vector Machine.
+First, it uses a StandardScaler to normalize the HOG features so they all have a mean of 0 and a variance of 1.
+This prevents features with larger numerical ranges from dominating the model.
+Then, it trains an SVC (Support Vector Classifier).
+If use_grid_search is true, it uses predefined optimal hyperparameters (Linear kernel, C=0.1); otherwise, it defaults to a Radial Basis Function (RBF) kernel.
+"""
 def train_hog_svm(X_train, y_train, X_val=None, y_val=None, use_grid_search=True):
     """
     Train HOG+SVM model with hyperparameter optimization.
@@ -549,6 +581,12 @@ def _print_metrics(y_true, y_pred):
 # ==========================================
 # MODEL EVALUATION
 # ==========================================
+"""
+Logic: The evaluate_model function tests the trained model against unseen data and calculates metrics:
+ Accuracy (overall correctness), Precision (avoiding false positives), Recall (finding all true positives),
+ F1-Score (balance of precision/recall), and ROC-AUC.
+It also generates a classification report.
+"""
 def evaluate_model(model, scaler, X_test, y_test, dataset_name="Test"):
     """
     Comprehensive model evaluation with multiple metrics.
@@ -690,6 +728,10 @@ def cross_validate_model(X, y, cv=5):
 # ==========================================
 # VISUALIZATION
 # ==========================================
+"""
+Logic:The visualization functions generate Confusion Matrices and ROC curves,
+saving them directly to the disk without opening blocking UI windows (matplotlib.use('Agg')).
+"""
 def plot_confusion_matrix(cm, dataset_name="Test"):
     """Plot confusion matrix (non-blocking)."""
     plt.figure(figsize=(8, 6))
@@ -801,6 +843,13 @@ def predict_single_image(image_path, model, scaler):
 # ==========================================
 # MAIN TRAINING PIPELINE WITH 2-FOLD CV
 # ==========================================
+# Logic: The main function orchestrates the entire workflow using 2-Fold Stratified Cross-Validation.
+# It gathers the paths and extracts all features.
+# It splits the data into 2 halves (folds), ensuring both halves have a proportional amount of "Pass" and "Fail" PCBs (Stratified).
+# It trains on Fold 1 and tests on Fold 2, then swaps and trains on Fold 2 and tests on Fold 1.
+# It compares the F1-scores of both iterations, picks the best performing model,
+# generates the visualization charts for that specific run, and saves the optimal model and scaler to the disk.
+
 def main():
     """Main training pipeline with 2-fold cross-validation."""
     from sklearn.model_selection import StratifiedKFold
