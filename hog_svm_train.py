@@ -23,25 +23,29 @@ from sklearn.metrics import (
 )
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('Agg')  # Non-blocking backend
+# Use 'Agg' backend to save plots to disk without opening GUI windows that halt the script
+matplotlib.use('Agg')  
 import seaborn as sns
 from tqdm import tqdm
 
 # ==========================================
 # CONFIGURATION
 # ==========================================
+# Define input/output directories and parameters
 DATA_DIR = "Data/Processed_data"
 MODEL_SAVE_DIR = "Export"
 MODEL_NAME = "hog_svm_model.pkl"
 SCALER_NAME = "hog_svm_scaler.pkl"
 
-IMG_SIZE = 244
-HOG_ORIENTATIONS = 9
-HOG_PIXELS_PER_CELL = (16, 16)
-HOG_CELLS_PER_BLOCK = (2, 2)
-HOG_WINDOW_STRIDE = (4, 4)
+# Image and HOG parameters
+IMG_SIZE = 244       # Standardized image size (244x244) for HOG feature extraction
+HOG_ORIENTATIONS = 9   # Number of gradient direction bins (9 is common for HOG)
+HOG_PIXELS_PER_CELL = (16, 16)  # size of each cell in pixels (16x16 is common for 244x244 images)
+HOG_CELLS_PER_BLOCK = (2, 2)  # Block size for contrast normalization (2x2 cells per block)
+HOG_WINDOW_STRIDE = (4, 4)  # Stride for the sliding window (4x4 is common for 244x244 images)
 
-RANDOM_STATE = 42
+# General training parameters
+RANDOM_STATE = 42  # Ensures reproducible random splits
 TEST_SPLIT = 0.2
 VAL_SPLIT = 0.2
 
@@ -75,6 +79,7 @@ def create_hog_descriptor():
         # HOGDescriptor(winSize, blockSize, blockStride, cellSize, nbins,
         #               derivAperture=1, winSigma=-1, histogramNormType=0,
         #               L2HysThreshold=0.2, gammaCorrection=True, nlevels=64)
+
         hog = cv2.HOGDescriptor(
             (IMG_SIZE, IMG_SIZE),      # winSize
             (32, 32),                  # blockSize (2 cells of 16x16)
@@ -90,7 +95,7 @@ def create_hog_descriptor():
         return cv2.HOGDescriptor()
 
 
-# Initialize HOG descriptor once at startup
+# Initialize globally so it isn't recreated for every single image
 HOG_DESCRIPTOR = create_hog_descriptor()
 
 
@@ -112,17 +117,17 @@ def extract_hog_features(image, visualize=False):
     global HOG_EXPECTED_FEATURE_SIZE
     
     try:
-        # Handle None input
+        # 1 Handle None input
         if image is None:
             print("  ERROR: Image is None")
             return None
         
-        # Validate image array
+       
         if not isinstance(image, np.ndarray):
             print(f"  ERROR: Image is not ndarray, got {type(image)}")
             return None
         
-        # Convert to grayscale if needed
+        # 2 Convert to grayscale if needed
         if len(image.shape) == 3:
             if image.shape[2] not in [3, 4]:
                 print(f"  ERROR: Invalid image channels: {image.shape[2]}")
@@ -132,28 +137,28 @@ def extract_hog_features(image, visualize=False):
             print(f"  ERROR: Invalid image shape: {image.shape}")
             return None
         
-        # Validate grayscale image
+        # 3 Validate grayscale image
         if image.dtype not in [np.uint8, np.float32, np.float64]:
             print(f"  ERROR: Invalid image dtype: {image.dtype}")
             return None
         
-        # Ensure image is uint8 for HOG
+        # 4 (Data type Normalization)Ensure image is uint8 for HOG
         if image.dtype != np.uint8:
             if image.max() > 1.0:  # Likely wrong scale
                 image = np.clip(image, 0, 255).astype(np.uint8)
             else:  # [0,1] range, scale to [0,255]
                 image = (image * 255).astype(np.uint8)
         
-        # Ensure correct size
+        # 5 Ensure correct size (standardize dimensions)
         if image.shape != (IMG_SIZE, IMG_SIZE):
             image = cv2.resize(image, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_LINEAR)
         
-        # Validate image data
+        # 6 Validate image data
         if image.size == 0:
             print("  ERROR: Empty image after processing")
             return None
         
-        # Extract HOG features - CRITICAL: winStride must match blockStride
+        # 7 Extract HOG features - CRITICAL: winStride must match blockStride
         features = HOG_DESCRIPTOR.compute(
             image, 
             winStride=(4, 4),    # Must match blockStride (adjusted for 244x244)
@@ -166,15 +171,15 @@ def extract_hog_features(image, visualize=False):
             print("  ERROR: HOG.compute returned None")
             return None
         
-        # Flatten to 1D
+        # 8 Flatten to 1D
         features = features.flatten()
         
-        # Validate feature vector
+        # 8.1 Validate feature vector
         if features.size == 0:
             print("  ERROR: Features empty after flatten")
             return None
         
-        # Set expected size on first successful extraction
+        # 9 (Consistency Check) Set expected size on first successful extraction
         if HOG_EXPECTED_FEATURE_SIZE is None:
             HOG_EXPECTED_FEATURE_SIZE = features.size
             print(f"  ℹ HOG feature size established: {HOG_EXPECTED_FEATURE_SIZE}")
@@ -191,7 +196,7 @@ def extract_hog_features(image, visualize=False):
         # Convert to float32 (stable type for sklearn)
         features = features.astype(np.float32)
         
-        # Validate final output
+        # Validate final output to prevent math errors in SVM
         if not np.all(np.isfinite(features)):
             print(f"  ERROR: Non-finite values in features (NaN/Inf)")
             return None
