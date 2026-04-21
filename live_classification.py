@@ -112,15 +112,20 @@ def main():
                 # Model's last layer is Dense(num_classes) with NO activation, so output is logits
                 # Convert raw logits to probabilities
                 probs = tf.nn.softmax(output[0]).numpy()
+                print("Raw probs:", probs)
                 
                 # CRITICAL FIX: Apply class weight adjustment for imbalanced dataset
                 # New dataset has 11:1 ratio (Fail:Pass), so model is biased towards Fail
                 # Apply inverse class weights to balance predictions
-                class_weights_correction = np.array([1.0/11.02, 1.0])  # Weights inverse to dataset imbalance
+                ratio = 2991 / 710
+                tuning_factor = 1.2  # Adjust this factor to control the strength of correction
+                class_weights_correction = np.array([1.0/(ratio * tuning_factor), 1.0])  # Weights inverse to dataset imbalance
                 class_weights_correction = class_weights_correction / class_weights_correction.sum()
                 weighted_probs = probs * class_weights_correction
                 weighted_probs = weighted_probs / weighted_probs.sum()
-                
+
+                print("Weighted probs:", weighted_probs)
+
                 pred_idx = np.argmax(weighted_probs)
                 confidence = float(weighted_probs[pred_idx])
                 
