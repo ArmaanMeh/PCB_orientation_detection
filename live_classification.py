@@ -115,17 +115,26 @@ def main():
                 print("Raw probs:", probs)
                 
                 # CRITICAL FIX: Apply class weight adjustment for imbalanced dataset
-                # New dataset has 11:1 ratio (Fail:Pass), so model is biased towards Fail
+                # New dataset has 4.21:1 ratio (Fail:Pass), so model is biased towards Fail
                 # Apply inverse class weights to balance predictions
+                # 1 Define the imbalance ratio.
                 ratio = 2991 / 710
                 tuning_factor = 1.2  # Adjust this factor to control the strength of correction
+                # 2. Calculate inverse class weights
+                # We want to multiply the 'Fail' probability by a small number 
+                # and the 'Pass' probability by a larger number.
+                # Weight for Fail = 1 / (ratio * tuning_factor)
+                # Weight for Pass = 1.0
                 class_weights_correction = np.array([1.0/(ratio * tuning_factor), 1.0])  # Weights inverse to dataset imbalance
+                # 3. Normalize weights so they sum to 1 (prevents exploding probabilities)
                 class_weights_correction = class_weights_correction / class_weights_correction.sum()
+                # 4. Apply weights to the model's raw probability output
                 weighted_probs = probs * class_weights_correction
+                # 5. Re-normalize to ensure the final probabilities sum to 1.0
                 weighted_probs = weighted_probs / weighted_probs.sum()
 
                 print("Weighted probs:", weighted_probs)
-
+                # 6. Extract prediction and confidence
                 pred_idx = np.argmax(weighted_probs)
                 confidence = float(weighted_probs[pred_idx])
                 
